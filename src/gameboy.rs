@@ -1,7 +1,10 @@
 use crate::{
     bus::Bus,
     cpu::Cpu,
+    io::Io,
+    ppu::Ppu,
     rom::{CgbFlag, Rom},
+    sound::Sound,
     util::Ref,
 };
 
@@ -13,7 +16,10 @@ pub struct GameBoy {
 impl GameBoy {
     pub fn new(rom: Rom, force_dmg: bool) -> Self {
         let rom = Ref::new(rom);
-        let bus = Ref::new(Bus::new(&rom));
+        let ppu = Ref::new(Ppu::new());
+        let sound = Ref::new(Sound::new());
+        let io = Ref::new(Io::new(&ppu, &sound));
+        let bus = Ref::new(Bus::new(&rom, &io));
         let mut cpu = Cpu::new(&bus);
 
         let is_gbc = match rom.borrow().cgb_flag {

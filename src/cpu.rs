@@ -1,4 +1,7 @@
-use crate::{bus::Bus, util::Ref};
+use crate::{
+    bus::Bus,
+    util::{ConstEval, Ref},
+};
 use log::{log_enabled, trace, Level};
 
 use bitvec::prelude::*;
@@ -95,7 +98,7 @@ impl Flag {
 
 #[rustfmt::skip]
 macro_rules! instructions {
-    ($cont:ident) => { $cont! { @start:
+    ($cont:ident) => { indexing! { $cont @start:
         //       0 / 8       1 / 9      2 / A       3 / B      4 / C       5 / D      6 / E       7 / F
         /* 00 */ NOP;        LD BC,nn;  LD (BC),A;  INC BC;    INC B;      DEC B;     LD B,n;     RLCA;
         /* 08 */ LD (nn),SP; ADD HL,BC; LD A,(BC);  DEC BC;    INC C;      DEC C;     LD C,n;     RRCA;
@@ -132,8 +135,24 @@ macro_rules! instructions {
     }};
 }
 
-trait ConstEval<const T: u8> {
-    const VALUE: u8 = T;
+macro_rules! indexing {
+    ($cont:ident @start: $($input:tt)*) => {
+        indexing!($cont @indexing: 0 => $($input)* @end_of_input)
+    };
+
+    ($cont:ident @indexing: $ix:expr => $mne:ident; $($rest:tt)*) => {
+        indexing!($cont @indexing: $ix + 1 => $($rest)* $ix => $mne [];)
+    };
+    ($cont:ident @indexing: $ix:expr => $mne:ident $opr:tt; $($rest:tt)*) => {
+        indexing!($cont @indexing: $ix + 1 => $($rest)* $ix => $mne [$opr];)
+    };
+    ($cont:ident @indexing: $ix:expr => $mne:ident $dst:tt, $src:tt; $($rest:tt)*) => {
+        indexing!($cont @indexing: $ix + 1 => $($rest)* $ix => $mne [$dst, $src];)
+    };
+
+    ($cont:ident @indexing: $_:expr => @end_of_input $($ix:expr => $mne:ident $opr:tt; )*) => {
+        $cont!($($ix => $mne $opr;)*)
+    };
 }
 
 impl Cpu {
@@ -162,50 +181,11 @@ impl Cpu {
     }
 
     fn exec_instr(&mut self) {
-        let opc = 0_u8;
+        let pc = self.reg.pc;
+        let opc = self.fetch();
 
         if log_enabled!(Level::Trace) {
-            self.trace(opc);
-        }
-
-        macro_rules! gen_code {
-            (@start: $($input:tt)*) => {
-                gen_code!(@indexing: 0 => $($input)* @end_of_input)
-            };
-
-            (@indexing: $ix:expr => $mne:ident; $($rest:tt)*) => {
-                gen_code!(@indexing: $ix + 1 => $($rest)* $ix => $mne [];)
-            };
-            (@indexing: $ix:expr => $mne:ident $opr:tt; $($rest:tt)*) => {
-                gen_code!(@indexing: $ix + 1 => $($rest)* $ix => $mne [$opr];)
-            };
-            (@indexing: $ix:expr => $mne:ident $dst:tt, $src:tt; $($rest:tt)*) => {
-                gen_code!(@indexing: $ix + 1 => $($rest)* $ix => $mne [$dst, $src];)
-            };
-
-            (@indexing: $_:expr => @end_of_input $($ix:expr => $mne:ident $opr:tt; )*) => {{
-                struct ConstEval<const V: u8>;
-
-                impl<const V: u8> ConstEval<V> {
-                    const VALUE: u8 = V;
-                }
-
-                match opc {
-                    $( ConstEval::<{$ix}>::VALUE => gen_instr!($mne $opr), )*
-                }
-            }};
-        }
-
-        macro_rules! gen_instr {
-            ($mne:ident []) => {
-                gen_mne!($mne)
-            };
-            ($mne:ident [$opr:tt]) => {{
-                gen_mne!($mne $opr)
-            }};
-            ($mne:ident [$dst:tt, $src:tt]) => {{
-                gen_mne!($mne $dst, $src)
-            }};
+            self.trace(pc, opc);
         }
 
         macro_rules! load {
@@ -655,6 +635,26 @@ impl Cpu {
             };
         }
 
+        macro_rules! gen_instr {
+            ($mne:ident []) => {
+                gen_mne!($mne)
+            };
+            ($mne:ident [$opr:tt]) => {{
+                gen_mne!($mne $opr)
+            }};
+            ($mne:ident [$dst:tt, $src:tt]) => {{
+                gen_mne!($mne $dst, $src)
+            }};
+        }
+
+        macro_rules! gen_code {
+            ($($ix:expr => $mne:ident $opr:tt;)*) => {
+                match opc {
+                    $( ConstEval::<{$ix}>::VALUE => gen_instr!($mne $opr), )*
+                }
+            };
+        }
+
         instructions!(gen_code);
     }
 }
@@ -682,9 +682,8 @@ impl Cpu {
     }
 
     fn fetch_u16(&mut self) -> u16 {
-        let lo = self.read(self.reg.pc);
-        let hi = self.read(self.reg.pc.wrapping_add(1));
-        self.reg.pc += 2;
+        let lo = self.fetch();
+        let hi = self.fetch();
         lo as u16 | (hi as u16) << 8
     }
 
@@ -712,8 +711,7 @@ impl Cpu {
 }
 
 impl Cpu {
-    fn trace(&mut self, opc: u8) {
-        let pc = self.reg.pc;
+    fn trace(&mut self, pc: u16, opc: u8) {
         let opr1 = self.bus.borrow_mut().read_immutable(pc.wrapping_add(1));
         let opr2 = self.bus.borrow_mut().read_immutable(pc.wrapping_add(2));
 
@@ -728,9 +726,9 @@ impl Cpu {
         };
 
         trace!(
-            "{pc:04X}  {bytes:8} {asm:16} | \
+            "{pc:04X}: {bytes:8} | {asm:16} | \
             A:{a:02X} B:{b:02X} C:{c:02X} D:{d:02X} E:{e:02X} H:{h:02X} L:{l:02X} \
-            SP:{sp:04X} F:{zf}{nf}{hf}{cf}",
+            SP:{sp:04X} F:{zf}{nf}{hf}{cf} CYC:{cyc}",
             a = self.reg.a,
             b = self.reg.b,
             c = self.reg.c,
@@ -739,10 +737,11 @@ impl Cpu {
             h = self.reg.h,
             l = self.reg.l,
             sp = self.reg.sp,
-            zf = self.reg.f.z,
-            nf = self.reg.f.n,
-            hf = self.reg.f.h,
-            cf = self.reg.f.c,
+            zf = if self.reg.f.z { 'Z' } else { '.' },
+            nf = if self.reg.f.n { 'N' } else { '.' },
+            hf = if self.reg.f.h { 'H' } else { '.' },
+            cf = if self.reg.f.c { 'C' } else { '.' },
+            cyc = self.counter
         );
     }
 }
@@ -752,48 +751,6 @@ fn disasm(pc: u16, opc: u8, opr1: Option<u8>, opr2: Option<u8>) -> (String, usiz
     let opr1 = opr1;
     let opr2 = opr2;
     let mut bytes = 1;
-
-    macro_rules! gen_disasm {
-        (@start: $($input:tt)*) => {
-            gen_disasm!(@indexing: 0 => $($input)* @end_of_input)
-        };
-
-        (@indexing: $ix:expr => $mne:ident; $($rest:tt)*) => {
-            gen_disasm!(@indexing: $ix + 1 => $($rest)* $ix => $mne [];)
-        };
-        (@indexing: $ix:expr => $mne:ident $opr:tt; $($rest:tt)*) => {
-            gen_disasm!(@indexing: $ix + 1 => $($rest)* $ix => $mne [$opr];)
-        };
-        (@indexing: $ix:expr => $mne:ident $dst:tt, $src:tt; $($rest:tt)*) => {
-            gen_disasm!(@indexing: $ix + 1 => $($rest)* $ix => $mne [$dst, $src];)
-        };
-
-
-        (@indexing: $_:expr => @end_of_input $($ix:expr => $mne:ident $opr:tt;)*) => {{
-            struct ConstEval<const V: u8>;
-
-            impl<const V: u8> ConstEval<V> {
-                const VALUE: u8 = V;
-            }
-
-            match opc {
-                $( ConstEval::<{$ix}>::VALUE => {
-                    let asm = gen_disasm!(@generate: $mne $opr);
-                    (asm, bytes)
-                })*
-            }
-        }};
-
-        (@generate: $mne:ident []) => {
-            stringify!($mne).to_string()
-        };
-        (@generate: $mne:ident [$opr:tt]) => {
-            format!("{} {}", stringify!($mne), gen_opr!($opr))
-        };
-        (@generate: $mne:ident [$dst:tt, $src:tt]) => {
-            format!("{} {}, {}", stringify!($mne), gen_opr!($dst), gen_opr!($src))
-        };
-    }
 
     macro_rules! gen_opr {
         ((^HL)) => {
@@ -824,12 +781,12 @@ fn disasm(pc: u16, opc: u8, opr1: Option<u8>, opr2: Option<u8>) -> (String, usiz
         }};
         (nn) => {{
             bytes += 2;
-            opr1.and_then(|opr1| opr2.map(|opr2| format!("${:02X}{:02X}", opr1, opr2)))
+            opr1.and_then(|opr1| opr2.map(|opr2| format!("${:02X}{:02X}", opr2, opr1)))
                 .unwrap_or("$????".to_string())
         }};
         ((nn)) => {{
             bytes += 2;
-            opr1.and_then(|opr1| opr2.map(|opr2| format!("(${:02X}{:02X})", opr1, opr2)))
+            opr1.and_then(|opr1| opr2.map(|opr2| format!("(${:02X}{:02X})", opr2, opr1)))
                 .unwrap_or("($????)".to_string())
         }};
 
@@ -842,6 +799,27 @@ fn disasm(pc: u16, opc: u8, opr1: Option<u8>, opr2: Option<u8>) -> (String, usiz
         };
         (($opr:ident)) => {
             stringify!(($opr))
+        };
+    }
+
+    macro_rules! gen_disasm {
+        ($($ix:expr => $mne:ident $opr:tt;)*) => {{
+            match opc {
+                $( ConstEval::<{$ix}>::VALUE => {
+                    let asm = gen_disasm!(@generate: $mne $opr);
+                    (asm, bytes)
+                })*
+            }
+        }};
+
+        (@generate: $mne:ident []) => {
+            stringify!($mne).to_string()
+        };
+        (@generate: $mne:ident [$opr:tt]) => {
+            format!("{} {}", stringify!($mne), gen_opr!($opr))
+        };
+        (@generate: $mne:ident [$dst:tt, $src:tt]) => {
+            format!("{} {}, {}", stringify!($mne), gen_opr!($dst), gen_opr!($src))
         };
     }
 

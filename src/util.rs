@@ -21,3 +21,9 @@ impl<T> Clone for Ref<T> {
         Ref(Rc::clone(&self.0))
     }
 }
+
+pub struct ConstEval<const V: u8>;
+
+impl<const V: u8> ConstEval<V> {
+    pub const VALUE: u8 = V;
+}
