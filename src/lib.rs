@@ -1,13 +1,13 @@
-#![recursion_limit = "512"]
-// #![feature(trace_macros)]
-// trace_macros!(true);
+#![recursion_limit = "1024"]
 
+pub mod apu;
 pub mod bus;
+pub mod consts;
 pub mod cpu;
 pub mod gameboy;
 pub mod interface;
 pub mod io;
+pub mod mbc;
 pub mod ppu;
 pub mod rom;
-pub mod sound;
 pub mod util;

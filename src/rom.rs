@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use anyhow::{bail, Result};
+use log::warn;
 use prettytable::{cell, format, row, table};
 
 pub struct Rom {
@@ -9,7 +10,7 @@ pub struct Rom {
     pub cgb_flag: CgbFlag,
     pub new_licensee_code: [u8; 2],
     pub sgb_flag: bool,
-    pub cartridge_type: u8,
+    pub cartridge_type: CartridgeType,
     pub rom_size: usize,
     pub ram_size: usize,
     pub destination_code: DestinationCode,
@@ -50,6 +51,125 @@ impl Display for DestinationCode {
     }
 }
 
+#[derive(Default, Clone)]
+pub struct CartridgeType {
+    pub mbc: Option<Mbc>,
+    pub has_ram: bool,
+    pub has_battery: bool,
+    pub has_timer: bool,
+    pub has_rumble: bool,
+    pub has_sensor: bool,
+}
+
+#[derive(Clone)]
+pub enum Mbc {
+    Mbc1,
+    Mbc2,
+    Mmm01,
+    Mbc3,
+    Mbc5,
+    Mbc6,
+    Mbc7,
+}
+
+impl Display for Mbc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Mbc::Mbc1 => "MBC1",
+            Mbc::Mbc2 => "MBC2",
+            Mbc::Mmm01 => "MMM01",
+            Mbc::Mbc3 => "MBC3",
+            Mbc::Mbc5 => "MBC5",
+            Mbc::Mbc6 => "MBC6",
+            Mbc::Mbc7 => "MBC7",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl CartridgeType {
+    fn with_mbc(mbc: Mbc) -> Self {
+        Self {
+            mbc: Some(mbc),
+            ..Default::default()
+        }
+    }
+
+    fn from_code(code: u8) -> Self {
+        use Mbc::*;
+        match code {
+            0x00 => Self::default(),
+            0x01 => Self::with_mbc(Mbc1),
+            0x02 => Self::with_mbc(Mbc1).with_ram(),
+            0x03 => Self::with_mbc(Mbc1).with_ram().with_battery(),
+            0x05 => Self::with_mbc(Mbc2),
+            0x06 => Self::with_mbc(Mbc2).with_ram(),
+            0x08 => Self::default().with_ram(),
+            0x09 => Self::default().with_ram().with_battery(),
+            0x0B => Self::with_mbc(Mmm01),
+            0x0C => Self::with_mbc(Mmm01).with_ram(),
+            0x0D => Self::with_mbc(Mmm01).with_ram().with_battery(),
+            0x0F => Self::with_mbc(Mbc3).with_timer().with_battery(),
+            0x10 => Self::with_mbc(Mbc3).with_timer().with_ram().with_battery(),
+            0x11 => Self::with_mbc(Mbc3),
+            0x12 => Self::with_mbc(Mbc3).with_ram(),
+            0x13 => Self::with_mbc(Mbc3).with_ram().with_battery(),
+            0x19 => Self::with_mbc(Mbc5),
+            0x1A => Self::with_mbc(Mbc5).with_ram(),
+            0x1B => Self::with_mbc(Mbc5).with_ram().with_battery(),
+            0x1C => Self::with_mbc(Mbc5).with_rumble(),
+            0x1D => Self::with_mbc(Mbc5).with_rumble().with_ram(),
+            0x1E => Self::with_mbc(Mbc5).with_rumble().with_ram().with_battery(),
+            0x20 => Self::with_mbc(Mbc6),
+            0x22 => Self::with_mbc(Mbc7)
+                .with_sensor()
+                .with_rumble()
+                .with_ram()
+                .with_battery(),
+            _ => panic!("Unknown cartridge type: 0x{code:02x}"),
+        }
+    }
+
+    fn with_ram(mut self) -> Self {
+        self.has_ram = true;
+        self
+    }
+    fn with_battery(mut self) -> Self {
+        self.has_ram = true;
+        self
+    }
+    fn with_timer(mut self) -> Self {
+        self.has_timer = true;
+        self
+    }
+    fn with_rumble(mut self) -> Self {
+        self.has_rumble = true;
+        self
+    }
+    fn with_sensor(mut self) -> Self {
+        self.has_sensor = true;
+        self
+    }
+}
+
+impl Display for CartridgeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mbc = self
+            .mbc
+            .as_ref()
+            .map_or_else(|| "ROM".to_string(), |mbc| mbc.to_string());
+        write!(
+            f,
+            "{mbc}{}{}{}{}{}",
+            if self.has_ram { "+RAM" } else { "" },
+            if self.has_battery { "+BATTERY" } else { "" },
+            if self.has_timer { "+TIMER" } else { "" },
+            if self.has_rumble { "+RUMBLE" } else { "" },
+            if self.has_sensor { "+SENSOR" } else { "" },
+        )
+    }
+}
+
 impl Rom {
     pub fn from_bytes(bytes: &[u8]) -> Result<Rom> {
         let header = &bytes[0x100..=0x14f];
@@ -76,7 +196,7 @@ impl Rom {
             v => bail!("Invalid SGB flag: ${v:02X}"),
         };
 
-        let cartridge_type = header[0x47];
+        let cartridge_type = CartridgeType::from_code(header[0x47]);
 
         let rom_size = match header[0x48] {
             n @ (0x00..=0x08) => (32 * 1024) << n,
@@ -122,7 +242,7 @@ impl Rom {
         }
 
         if x != header_checksum {
-            bail!("Invalid header checksum: checksum in ROM is ${header_checksum:02X}, but calculated checksum is ${x:02X}");
+            warn!("Invalid header checksum: checksum in ROM is ${header_checksum:02X}, but calculated checksum is ${x:02X}");
         }
 
         let global_checksum = (header[0x4e] as u16) << 8 | header[0x4f] as u16;
@@ -135,7 +255,7 @@ impl Rom {
         }
 
         if global_checksum != check_sum {
-            bail!("Invalid global checksum: checksum in ROM is ${global_checksum:04X}, but calculated checksum is ${check_sum:04X}");
+            warn!("Invalid global checksum: checksum in ROM is ${global_checksum:04X}, but calculated checksum is ${check_sum:04X}");
         }
 
         Ok(Rom {

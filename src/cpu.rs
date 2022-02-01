@@ -2,17 +2,20 @@ use crate::{
     bus::Bus,
     util::{ConstEval, Ref},
 };
-use log::{log_enabled, trace, Level};
+use log::{info, log_enabled, trace, warn, Level};
 
 use bitvec::prelude::*;
 
 pub struct Cpu {
     halting: bool,
-    interrupt_enable: bool,
+    interrupt_master_enable: bool,
     prev_interrupt_enable: bool,
-    pub reg: Register,
+    reg: Register,
     counter: u64,
     world: u64,
+    interrupt_enable: Ref<u8>,
+    interrupt_flag: Ref<u8>,
+    prev_interrupt_flag: u8,
     bus: Ref<Bus>,
 }
 
@@ -135,6 +138,45 @@ macro_rules! instructions {
     }};
 }
 
+#[rustfmt::skip]
+macro_rules! instructions_cb {
+    ($cont:ident) => { indexing! { $cont @start:
+        //       0 / 8       1 / 9      2 / A       3 / B      4 / C       5 / D      6 / E       7 / F
+        /* 00 */ RLC B;      RLC C;     RLC D;      RLC E;     RLC H;      RLC L;     RLC (HL);   RLC A;
+        /* 08 */ RRC B;      RRC C;     RRC D;      RRC E;     RRC H;      RRC L;     RRC (HL);   RRC A;
+        /* 10 */ RL B;       RL C;      RL D;       RL E;      RL H;       RL L;      RL (HL);    RL A;
+        /* 18 */ RR B;       RR C;      RR D;       RR E;      RR H;       RR L;      RR (HL);    RR A;
+        /* 20 */ SLA B;      SLA C;     SLA D;      SLA E;     SLA H;      SLA L;     SLA (HL);   SLA A;
+        /* 28 */ SRA B;      SRA C;     SRA D;      SRA E;     SRA H;      SRA L;     SRA (HL);   SRA A;
+        /* 30 */ SWAP B;     SWAP C;    SWAP D;     SWAP E;    SWAP H;     SWAP L;    SWAP (HL);  SWAP A;
+        /* 38 */ SRL B;      SRL C;     SRL D;      SRL E;     SRL H;      SRL L;     SRL (HL);   SRL A;
+        /* 40 */ BIT 0,B;    BIT 0,C;   BIT 0,D;    BIT 0,E;   BIT 0,H;    BIT 0,L;   BIT 0,(HL); BIT 0,A;
+        /* 48 */ BIT 1,B;    BIT 1,C;   BIT 1,D;    BIT 1,E;   BIT 1,H;    BIT 1,L;   BIT 1,(HL); BIT 1,A;
+        /* 50 */ BIT 2,B;    BIT 2,C;   BIT 2,D;    BIT 2,E;   BIT 2,H;    BIT 2,L;   BIT 2,(HL); BIT 2,A;
+        /* 58 */ BIT 3,B;    BIT 3,C;   BIT 3,D;    BIT 3,E;   BIT 3,H;    BIT 3,L;   BIT 3,(HL); BIT 3,A;
+        /* 60 */ BIT 4,B;    BIT 4,C;   BIT 4,D;    BIT 4,E;   BIT 4,H;    BIT 4,L;   BIT 4,(HL); BIT 4,A;
+        /* 68 */ BIT 5,B;    BIT 5,C;   BIT 5,D;    BIT 5,E;   BIT 5,H;    BIT 5,L;   BIT 5,(HL); BIT 5,A;
+        /* 70 */ BIT 6,B;    BIT 6,C;   BIT 6,D;    BIT 6,E;   BIT 6,H;    BIT 6,L;   BIT 6,(HL); BIT 6,A;
+        /* 78 */ BIT 7,B;    BIT 7,C;   BIT 7,D;    BIT 7,E;   BIT 7,H;    BIT 7,L;   BIT 7,(HL); BIT 7,A;
+        /* 80 */ RES 0,B;    RES 0,C;   RES 0,D;    RES 0,E;   RES 0,H;    RES 0,L;   RES 0,(HL); RES 0,A;
+        /* 88 */ RES 1,B;    RES 1,C;   RES 1,D;    RES 1,E;   RES 1,H;    RES 1,L;   RES 1,(HL); RES 1,A;
+        /* 90 */ RES 2,B;    RES 2,C;   RES 2,D;    RES 2,E;   RES 2,H;    RES 2,L;   RES 2,(HL); RES 2,A;
+        /* 98 */ RES 3,B;    RES 3,C;   RES 3,D;    RES 3,E;   RES 3,H;    RES 3,L;   RES 3,(HL); RES 3,A;
+        /* A0 */ RES 4,B;    RES 4,C;   RES 4,D;    RES 4,E;   RES 4,H;    RES 4,L;   RES 4,(HL); RES 4,A;
+        /* A8 */ RES 5,B;    RES 5,C;   RES 5,D;    RES 5,E;   RES 5,H;    RES 5,L;   RES 5,(HL); RES 5,A;
+        /* B0 */ RES 6,B;    RES 6,C;   RES 6,D;    RES 6,E;   RES 6,H;    RES 6,L;   RES 6,(HL); RES 6,A;
+        /* B8 */ RES 7,B;    RES 7,C;   RES 7,D;    RES 7,E;   RES 7,H;    RES 7,L;   RES 7,(HL); RES 7,A;
+        /* C0 */ SET 0,B;    SET 0,C;   SET 0,D;    SET 0,E;   SET 0,H;    SET 0,L;   SET 0,(HL); SET 0,A;
+        /* C8 */ SET 1,B;    SET 1,C;   SET 1,D;    SET 1,E;   SET 1,H;    SET 1,L;   SET 1,(HL); SET 1,A;
+        /* D0 */ SET 2,B;    SET 2,C;   SET 2,D;    SET 2,E;   SET 2,H;    SET 2,L;   SET 2,(HL); SET 2,A;
+        /* D8 */ SET 3,B;    SET 3,C;   SET 3,D;    SET 3,E;   SET 3,H;    SET 3,L;   SET 3,(HL); SET 3,A;
+        /* E0 */ SET 4,B;    SET 4,C;   SET 4,D;    SET 4,E;   SET 4,H;    SET 4,L;   SET 4,(HL); SET 4,A;
+        /* E8 */ SET 5,B;    SET 5,C;   SET 5,D;    SET 5,E;   SET 5,H;    SET 5,L;   SET 5,(HL); SET 5,A;
+        /* F0 */ SET 6,B;    SET 6,C;   SET 6,D;    SET 6,E;   SET 6,H;    SET 6,L;   SET 6,(HL); SET 6,A;
+        /* F8 */ SET 7,B;    SET 7,C;   SET 7,D;    SET 7,E;   SET 7,H;    SET 7,L;   SET 7,(HL); SET 7,A;
+    }};
+}
+
 macro_rules! indexing {
     ($cont:ident @start: $($input:tt)*) => {
         indexing!($cont @indexing: 0 => $($input)* @end_of_input)
@@ -156,28 +198,62 @@ macro_rules! indexing {
 }
 
 impl Cpu {
-    pub fn new(bus: &Ref<Bus>) -> Self {
+    pub fn new(bus: &Ref<Bus>, interrupt_enable: &Ref<u8>, interrupt_flag: &Ref<u8>) -> Self {
         Self {
             reg: Register::default(),
             halting: false,
-            interrupt_enable: false,
+            interrupt_master_enable: false,
             prev_interrupt_enable: false,
             counter: 0,
             world: 0,
+            interrupt_enable: Ref::clone(interrupt_enable),
+            interrupt_flag: Ref::clone(interrupt_flag),
+            prev_interrupt_flag: 0,
             bus: Ref::clone(bus),
         }
+    }
+
+    pub fn register(&mut self) -> &mut Register {
+        &mut self.reg
     }
 
     pub fn tick(&mut self) {
         self.world += 1;
         while self.counter < self.world {
-            if self.prev_interrupt_enable {
-                // TODO: check interrupt
+            if self.process_interrupt() {
+                continue;
             }
-            self.prev_interrupt_enable = self.interrupt_enable;
-
-            self.exec_instr();
+            if !self.halting {
+                self.prev_interrupt_enable = self.interrupt_master_enable;
+                self.exec_instr();
+            }
         }
+    }
+
+    fn process_interrupt(&mut self) -> bool {
+        let interrupt_flag = *self.interrupt_flag.borrow();
+        let interrupt_flag_rise = !self.prev_interrupt_flag & interrupt_flag;
+        self.prev_interrupt_flag = interrupt_flag;
+
+        if !self.prev_interrupt_enable {
+            return false;
+        }
+        let b = interrupt_flag_rise & *self.interrupt_enable.borrow();
+        if b == 0 {
+            return false;
+        }
+        for i in 0..5 {
+            if b & (1 << i) != 0 {
+                info!("INT {:02X} occured", 0x40 + i * 8);
+                self.interrupt_master_enable = false;
+                *self.interrupt_flag.borrow_mut() &= !(1 << i);
+                self.push_u16(self.reg.pc);
+                self.reg.pc = 0x40 + i * 8;
+                self.halting = false;
+                return true;
+            }
+        }
+        unreachable!()
     }
 
     fn exec_instr(&mut self) {
@@ -235,6 +311,7 @@ impl Cpu {
             };
             (SPn) => {{
                 // FIXME: set flags
+                warn!("Currently SP+n does not set flags");
                 self.reg.sp.wrapping_add(self.fetch() as i8 as u16)
             }};
             (r8) => {{
@@ -290,7 +367,7 @@ impl Cpu {
                 self.reg.h = $data;
             }};
             (L, $data:ident) => {{
-                self.reg.h = $data;
+                self.reg.l = $data;
             }};
 
             (AF, $data:ident) => {{
@@ -334,7 +411,7 @@ impl Cpu {
             }};
             ((nn), $data:ident) => {{
                 let addr = self.fetch_u16();
-                if std::mem::size_of_val(&$data) == 8 {
+                if std::mem::size_of_val(&$data) == 1 {
                     self.write(addr, $data as u8);
                 } else {
                     self.write_u16(addr, $data as u16);
@@ -383,21 +460,21 @@ impl Cpu {
 
             (ADD A, $opr:tt) => {{
                 let opr = load!($opr);
-                let res = self.reg.a as u16 + opr as u16;
+                let (res, overflow) = self.reg.a.overflowing_add(opr);
                 self.reg.f.n = false;
-                self.reg.f.h = (self.reg.a ^ opr ^ res as u8) & 0x10 != 0;
-                self.reg.f.c = res > 0xff;
-                self.reg.f.z = res & 0xff == 0;
-                self.reg.a = res as u8;
+                self.reg.f.h = (self.reg.a ^ opr ^ res) & 0x10 != 0;
+                self.reg.f.c = overflow;
+                self.reg.f.z = res == 0;
+                self.reg.a = res;
             }};
             (ADD HL, $opr:tt) => {{
                 let opr = load!($opr);
                 let dst = self.reg.hl();
-                let res = dst as u32 + opr as u32;
+                let (res, overflow) = dst.overflowing_add(opr);
                 self.reg.f.n = false;
-                self.reg.f.h = (opr ^ dst ^ res as u16) & 0x1000 != 0;
-                self.reg.f.c = res > 0xffff;
-                self.reg.set_hl(res as u16);
+                self.reg.f.h = (opr ^ dst ^ res) & 0x1000 != 0;
+                self.reg.f.c = overflow;
+                self.reg.set_hl(res);
             }};
             (ADD SP, $opr:tt) => {{
                 let opr = load!($opr) as i8 as u16;
@@ -407,36 +484,44 @@ impl Cpu {
                 self.reg.f.n = false;
                 self.reg.f.h = (opr ^ dst ^ res) & 0x10 != 0;
                 self.reg.f.c = (opr ^ dst ^ res) & 0x100 != 0;
-                self.reg.set_hl(res as u16);
+                self.reg.set_hl(res);
             }};
             (ADC A, $opr:tt) => {{
                 let opr = load!($opr);
-                let res = self.reg.a as u16 + opr as u16 + self.reg.f.c as u16;
+                let (res, overflow1) = self.reg.a.overflowing_add(opr);
+                let (res, overflow2) = res.overflowing_add(self.reg.f.c as u8);
                 self.reg.f.n = false;
-                self.reg.f.h = (self.reg.a ^ opr ^ res as u8) & 0x10 != 0;
-                self.reg.f.c = res > 0xff;
-                self.reg.f.z = res & 0xff == 0;
-                self.reg.a = res as u8;
+                self.reg.f.h = (self.reg.a ^ opr ^ res) & 0x10 != 0;
+                self.reg.f.c = overflow1 | overflow2;
+                self.reg.f.z = res == 0;
+                self.reg.a = res;
             }};
             (SUB $opr:tt) => {{
                 let opr = load!($opr);
-                let res = (self.reg.a as u16).wrapping_sub(opr as u16);
+                let (res, overflow) = self.reg.a.overflowing_sub(opr);
                 self.reg.f.n = true;
-                self.reg.f.h = (self.reg.a ^ opr ^ res as u8) & 0x10 == 0;
-                self.reg.f.c = res <= 0xff;
-                self.reg.f.z = res & 0xff == 0;
-                self.reg.a = res as u8;
+                self.reg.f.h = (self.reg.a ^ opr ^ res) & 0x10 != 0;
+                self.reg.f.c = overflow;
+                self.reg.f.z = res == 0;
+                self.reg.a = res;
             }};
             (SBC A, $opr:tt) => {{
                 let opr = load!($opr);
-                let res = (self.reg.a as u16)
-                    .wrapping_sub(opr as u16)
-                    .wrapping_add(self.reg.f.c as u16);
+                let (res, overflow1) = self.reg.a.overflowing_sub(opr);
+                let (res, overflow2) = res.overflowing_sub(self.reg.f.c as u8);
                 self.reg.f.n = true;
-                self.reg.f.h = (self.reg.a ^ opr ^ res as u8) & 0x10 == 0;
-                self.reg.f.c = res <= 0xff;
-                self.reg.f.z = res & 0xff == 0;
-                self.reg.a = res as u8;
+                self.reg.f.h = (self.reg.a ^ opr ^ res) & 0x10 != 0;
+                self.reg.f.c = overflow1 | overflow2;
+                self.reg.f.z = res == 0;
+                self.reg.a = res;
+            }};
+            (CP $opr:tt) => {{
+                let opr = load!($opr);
+                let (res, overflow) = self.reg.a.overflowing_sub(opr);
+                self.reg.f.n = true;
+                self.reg.f.h = (self.reg.a ^ opr ^ res) & 0x10 != 0;
+                self.reg.f.c = overflow;
+                self.reg.f.z = res == 0;
             }};
             (AND $opr:tt) => {{
                 let opr = load!($opr);
@@ -462,18 +547,10 @@ impl Cpu {
                 self.reg.f.h = false;
                 self.reg.f.c = false;
             }};
-            (CP $opr:tt) => {{
-                let opr = load!($opr);
-                let res = (self.reg.a as u16).wrapping_sub(opr as u16);
-                self.reg.f.n = true;
-                self.reg.f.h = (self.reg.a ^ opr ^ res as u8) & 0x10 == 0;
-                self.reg.f.c = res <= 0xff;
-                self.reg.f.z = res & 0xff == 0;
-            }};
 
             (INC $opr:tt) => {{
                 let opr = load!($opr);
-                if std::mem::size_of_val(&opr) == 8 {
+                if std::mem::size_of_val(&opr) == 1 {
                     let res = opr.wrapping_add(1);
                     self.reg.f.z = res == 0;
                     self.reg.f.n = false;
@@ -486,7 +563,7 @@ impl Cpu {
             }};
             (DEC $opr:tt) => {{
                 let opr = load!($opr);
-                if std::mem::size_of_val(&opr) == 8 {
+                if std::mem::size_of_val(&opr) == 1 {
                     let res = opr.wrapping_sub(1);
                     self.reg.f.z = res == 0;
                     self.reg.f.n = false;
@@ -498,9 +575,31 @@ impl Cpu {
                 }
             }};
 
-            // SWAP n
+            (SWAP $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr.rotate_left(4);
+                self.reg.f.z = res == 0;
+                self.reg.f.n = false;
+                self.reg.f.h = false;
+                self.reg.f.c = false;
+                store!($opr, res);
+            }};
             (DAA) => {{
-                todo!("DAA")
+                let mut a = self.reg.a;
+                let mut adjust = 0;
+                adjust |= if self.reg.f.c { 0x60 } else { 0 };
+                adjust |= if self.reg.f.h { 0x06 } else { 0 };
+                let res = if !self.reg.f.n {
+                    adjust |= if a & 0x0f > 0x09 { 0x06 } else { 0 };
+                    adjust |= if a > 0x99 { 0x60 } else { 0 };
+                    a.wrapping_add(adjust)
+                } else {
+                    a.wrapping_sub(adjust)
+                };
+                self.reg.a = res;
+                self.reg.f.z = res == 0;
+                self.reg.f.h = false;
+                self.reg.f.c = adjust >= 0x60;
             }};
             (CPL) => {{
                 self.reg.a ^= 0xff;
@@ -525,55 +624,104 @@ impl Cpu {
                 todo!("STOP")
             };
             (DI) => {{
-                self.interrupt_enable = false;
+                self.interrupt_master_enable = false;
             }};
             (EI) => {{
-                self.interrupt_enable = true;
+                self.interrupt_master_enable = true;
             }};
 
-            (RLCA) => {{
-                let res = self.reg.a.rotate_left(1);
+            (RLCA) => {
+                gen_mne!(RLC A)
+            };
+            (RLA) => {
+                gen_mne!(RL A)
+            };
+            (RRCA) => {
+                gen_mne!(RRC A)
+            };
+            (RRA) => {
+                gen_mne!(RR A)
+            };
+            (RLC $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr.rotate_left(1);
                 self.reg.f.z = res == 0;
                 self.reg.f.n = false;
                 self.reg.f.h = false;
-                self.reg.f.c = (self.reg.a & 0x80) != 0;
-                self.reg.a = res;
+                self.reg.f.c = (opr & 0x80) != 0;
+                store!($opr, res);
             }};
-            (RLA) => {{
-                let res = self.reg.a << 1 | self.reg.f.c as u8;
+            (RL $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr << 1 | self.reg.f.c as u8;
                 self.reg.f.z = res == 0;
                 self.reg.f.n = false;
                 self.reg.f.h = false;
-                self.reg.f.c = (self.reg.a & 0x80) != 0;
-                self.reg.a = res;
+                self.reg.f.c = (opr & 0x80) != 0;
+                store!($opr, res);
             }};
-            (RRCA) => {{
-                let res = self.reg.a.rotate_right(1);
+            (RRC $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr.rotate_right(1);
                 self.reg.f.z = res == 0;
                 self.reg.f.n = false;
                 self.reg.f.h = false;
-                self.reg.f.c = (self.reg.a & 0x01) != 0;
-                self.reg.a = res;
+                self.reg.f.c = (opr & 0x01) != 0;
+                store!($opr, res);
             }};
-            (RRA) => {{
-                let res = self.reg.a >> 1 | (self.reg.f.c as u8) << 7;
+            (RR $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr >> 1 | (self.reg.f.c as u8) << 7;
                 self.reg.f.z = res == 0;
                 self.reg.f.n = false;
                 self.reg.f.h = false;
-                self.reg.f.c = (self.reg.a & 0x01) != 0;
-                self.reg.a = res;
+                self.reg.f.c = (opr & 0x01) != 0;
+                store!($opr, res);
             }};
-            // RLC n
-            // RL n
-            // RRC n
-            // RR n
-            // SLA n
-            // SRA n
-            // SRL n
-            // BIT b, r
-            // SET b, r
-            // RES b, r
-            //
+            (SLA $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr << 1;
+                self.reg.f.z = res == 0;
+                self.reg.f.n = false;
+                self.reg.f.h = false;
+                self.reg.f.c = (opr & 0x80) != 0;
+                store!($opr, res);
+            }};
+            (SRA $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr >> 1 | (opr & 0x80);
+                self.reg.f.z = res == 0;
+                self.reg.f.n = false;
+                self.reg.f.h = false;
+                self.reg.f.c = (opr & 0x01) != 0;
+                store!($opr, res);
+            }};
+            (SRL $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr >> 1;
+                self.reg.f.z = res == 0;
+                self.reg.f.n = false;
+                self.reg.f.h = false;
+                self.reg.f.c = (opr & 0x01) != 0;
+                store!($opr, res);
+            }};
+            (BIT $bit:literal, $opr:tt) => {{
+                let opr = load!($opr);
+                self.reg.f.z = (opr & (1 << $bit)) == 0;
+                self.reg.f.n = false;
+                self.reg.f.h = true;
+            }};
+            (SET $bit:literal, $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr | (1 << $bit);
+                store!($opr, res);
+            }};
+            (RES $bit:literal, $opr:tt) => {{
+                let opr = load!($opr);
+                let res = opr & !(1 << $bit);
+                store!($opr, res);
+            }};
+
             (JP nn) => {{
                 self.reg.pc = load!(nn);
             }};
@@ -623,7 +771,7 @@ impl Cpu {
             }};
             (RETI) => {{
                 self.reg.pc = self.pop_u16();
-                self.interrupt_enable = true;
+                self.interrupt_master_enable = true;
             }};
 
             (UNK) => {
@@ -631,7 +779,7 @@ impl Cpu {
             };
 
             (CB) => {
-                todo!("CB prefixed")
+                instructions_cb!(gen_code_cb)
             };
         }
 
@@ -653,6 +801,15 @@ impl Cpu {
                     $( ConstEval::<{$ix}>::VALUE => gen_instr!($mne $opr), )*
                 }
             };
+        }
+
+        macro_rules! gen_code_cb {
+            ($($ix:expr => $mne:ident $opr:tt;)*) => {{
+                let opc_cb = self.fetch();
+                match opc_cb {
+                    $( ConstEval::<{$ix}>::VALUE => gen_instr!($mne $opr), )*
+                }
+            }};
         }
 
         instructions!(gen_code);
@@ -803,14 +960,18 @@ fn disasm(pc: u16, opc: u8, opr1: Option<u8>, opr2: Option<u8>) -> (String, usiz
     }
 
     macro_rules! gen_disasm {
-        ($($ix:expr => $mne:ident $opr:tt;)*) => {{
+        ($($ix:expr => $mne:ident $opr:tt;)*) => {
             match opc {
                 $( ConstEval::<{$ix}>::VALUE => {
                     let asm = gen_disasm!(@generate: $mne $opr);
                     (asm, bytes)
                 })*
             }
-        }};
+        };
+
+        (@generate: CB []) => {
+            instructions_cb!(gen_disasm_cb)
+        };
 
         (@generate: $mne:ident []) => {
             stringify!($mne).to_string()
@@ -820,6 +981,25 @@ fn disasm(pc: u16, opc: u8, opr1: Option<u8>, opr2: Option<u8>) -> (String, usiz
         };
         (@generate: $mne:ident [$dst:tt, $src:tt]) => {
             format!("{} {}, {}", stringify!($mne), gen_opr!($dst), gen_opr!($src))
+        };
+    }
+
+    macro_rules! gen_disasm_cb {
+        ($($ix:expr => $mne:ident $opr:tt;)*) => {{
+            bytes += 1;
+            match opr1 {
+                $( Some(ConstEval::<{$ix}>::VALUE) => {
+                    gen_disasm_cb!(@generate: $mne $opr)
+                })*
+                None => format!("???"),
+            }
+        }};
+
+        (@generate: $mne:ident [$opr:tt]) => {
+            format!("{} {}", stringify!($mne), gen_opr!($opr))
+        };
+        (@generate: $mne:ident [$n:literal, $opr:tt]) => {
+            format!("{} {}, {}", stringify!($mne), $n, gen_opr!($opr))
         };
     }
 
