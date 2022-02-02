@@ -3,7 +3,7 @@ use crate::{
     bus::Bus,
     consts::{SCREEN_HEIGHT, SCREEN_WIDTH},
     cpu::Cpu,
-    interface::FrameBuffer,
+    interface::{AudioBuffer, FrameBuffer, Input},
     io::Io,
     mbc::create_mbc,
     ppu::Ppu,
@@ -13,9 +13,12 @@ use crate::{
 
 pub struct GameBoy {
     cpu: Cpu,
+    io: Ref<Io>,
     ppu: Ref<Ppu>,
+    apu: Ref<Apu>,
     rom: Ref<Rom>,
     frame_buffer: Ref<FrameBuffer>,
+    audio_buffer: Ref<AudioBuffer>,
 }
 
 impl GameBoy {
@@ -26,6 +29,7 @@ impl GameBoy {
             SCREEN_WIDTH as usize,
             SCREEN_HEIGHT as usize,
         ));
+        let audio_buffer = Ref::new(AudioBuffer::new());
 
         let interrupt_enable = Ref::new(0x00);
         let interrupt_flag = Ref::new(0x00);
@@ -34,7 +38,7 @@ impl GameBoy {
         let oam = Ref::new(vec![0; 0xA0]);
 
         let ppu = Ref::new(Ppu::new(&vram, &oam, &interrupt_flag, &frame_buffer));
-        let apu = Ref::new(Apu::new());
+        let apu = Ref::new(Apu::new(&audio_buffer));
 
         let io = Ref::new(Io::new(&ppu, &apu, &interrupt_enable, &interrupt_flag));
 
@@ -75,24 +79,38 @@ impl GameBoy {
 
         Self {
             cpu,
+            io,
             ppu,
+            apu,
             rom,
             frame_buffer,
+            audio_buffer,
         }
     }
 
+    pub fn set_input(&mut self, input: &Input) {
+        self.io.borrow_mut().set_input(input);
+    }
+
     pub fn exec_frame(&mut self) {
+        self.audio_buffer.borrow_mut().buf.clear();
         let start_frame = self.ppu.borrow().frame();
 
         while start_frame == self.ppu.borrow().frame() {
             self.cpu.tick();
+            self.io.borrow_mut().tick();
             for _ in 0..4 {
                 self.ppu.borrow_mut().tick();
+                self.apu.borrow_mut().tick();
             }
         }
     }
 
     pub fn frame_buffer(&self) -> &Ref<FrameBuffer> {
         &self.frame_buffer
+    }
+
+    pub fn audio_buffer(&self) -> &Ref<AudioBuffer> {
+        &self.audio_buffer
     }
 }

@@ -1,7 +1,7 @@
 use bitvec::prelude::*;
 use log::{trace, warn};
 
-use crate::{apu::Apu, interface::Input, ppu::Ppu, util::Ref};
+use crate::{apu::Apu, consts::INT_TIMER, interface::Input, ppu::Ppu, util::Ref};
 
 pub struct Io {
     select_action_buttons: bool,
@@ -14,11 +14,16 @@ pub struct Io {
     interrupt_flag: Ref<u8>,
     interrupt_enable: Ref<u8>,
 
+    divider_counter: u8,
+    timer_divider_counter: u16,
+
     ppu: Ref<Ppu>,
     apu: Ref<Apu>,
 
     input: Input,
 }
+
+const TIMER_DIVIDER_BITS: [u8; 4] = [8, 2, 4, 6];
 
 impl Io {
     pub fn new(
@@ -37,9 +42,40 @@ impl Io {
             input_clock_select: 0,
             interrupt_enable: Ref::clone(interrupt_enable),
             interrupt_flag: Ref::clone(interrupt_flag),
+            divider_counter: 0,
+            timer_divider_counter: 0,
             ppu: Ref::clone(ppu),
             apu: Ref::clone(apu),
             input: Input::default(),
+        }
+    }
+
+    pub fn tick(&mut self) {
+        self.divider_counter += 1;
+        if self.divider_counter == 64 {
+            self.divider_counter = 0;
+            self.divider = self.divider.wrapping_add(1);
+        }
+
+        if self.timer_enable {
+            let prev = self.timer_divider_counter;
+            let new = prev.wrapping_add(1);
+            self.timer_divider_counter = new;
+            let pos = TIMER_DIVIDER_BITS[self.input_clock_select as usize] as usize;
+
+            if (prev & !new).view_bits::<Lsb0>()[pos - 1] {
+                // eprintln!(
+                //     "TIMER TICK: {:04X}, clock-select: {}, timer-counter: {:02X}",
+                //     self.timer_divider_counter, self.input_clock_select, self.timer_counter
+                // );
+
+                let (new_counter, overflow) = self.timer_counter.overflowing_add(1);
+                self.timer_counter = new_counter;
+                if overflow {
+                    self.timer_counter = self.timer_modulo;
+                    *self.interrupt_flag.borrow_mut() |= INT_TIMER;
+                }
+            }
         }
     }
 
@@ -102,7 +138,10 @@ impl Io {
             // PPU Registers
             0x40..=0x4B => self.ppu.borrow_mut().read(addr),
 
-            _ => unreachable!(),
+            _ => {
+                warn!("Unknown I/O Read: {:04X}", addr);
+                0
+            }
         };
 
         trace!("I/O Read: (${addr:04X}) => ${ret:02X}");
@@ -125,7 +164,7 @@ impl Io {
             }
             // SC: Serial transfer control (R/W)
             0x02 => {
-                warn!("Write to SC: {data:02X}");
+                // warn!("Write to SC: {data:02X}");
             }
             // DIV: Divider register (R/W)
             0x04 => self.divider = 0,
@@ -150,7 +189,7 @@ impl Io {
             0x40..=0x4B => self.ppu.borrow_mut().write(addr, data),
 
             _ => {
-                // warn!("Write to ${:04X} = ${:02X}", addr, data);
+                warn!("Write to ${:04X} = ${:02X}", addr, data);
             }
         }
     }

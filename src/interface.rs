@@ -55,3 +55,24 @@ impl FrameBuffer {
         self.buf[y * self.width + x] = color;
     }
 }
+
+pub struct AudioBuffer {
+    pub buf: Vec<AudioSample>,
+}
+
+impl AudioBuffer {
+    pub fn new() -> Self {
+        Self { buf: vec![] }
+    }
+}
+
+pub struct AudioSample {
+    pub right: i16,
+    pub left: i16,
+}
+
+impl AudioSample {
+    pub fn new(right: i16, left: i16) -> Self {
+        Self { right, left }
+    }
+}

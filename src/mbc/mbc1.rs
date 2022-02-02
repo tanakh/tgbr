@@ -53,7 +53,13 @@ impl Mbc for Mbc1 {
                 .store(data.view_bits::<Lsb0>()[0..=4].load::<u8>()),
             0x4000..=0x5FFF => self.ram_bank = data.view_bits::<Lsb0>()[0..=1].load(),
             0x6000..=0x7FFF => self.banking_mode = data & 0x01 != 0,
-            0xA000..=0xBFFF => self.ram[(addr & 0x1FFF) as usize] = data,
+            0xA000..=0xBFFF => {
+                // FIXME
+                let addr = (addr & 0x1FFF) as usize;
+                if addr < self.ram.len() {
+                    self.ram[addr] = data;
+                }
+            }
             _ => unreachable!(),
         }
     }

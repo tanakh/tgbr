@@ -69,13 +69,13 @@ fn main(file: PathBuf) -> Result<()> {
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow!("{e}"))?;
     let desired_spec = AudioSpecDesired {
         freq: Some(48000),
-        channels: Some(1),
+        channels: Some(2),
         samples: Some(2048),
     };
     let device: AudioQueue<i16> = audio_subsystem
         .open_queue(None, &desired_spec)
         .map_err(|e| anyhow!("{e}"))?;
-    device.queue(&vec![0; 2048]);
+    device.queue(&vec![0; 2048 * 2]);
     device.resume();
 
     let input_manager = InputManager::new(&sdl_context, KeyConfig::default())?;
@@ -88,7 +88,7 @@ fn main(file: PathBuf) -> Result<()> {
     while process_events(&mut event_pump) {
         let input = input_manager.get_input(&event_pump);
 
-        // gb.set_input(&input);
+        gb.set_input(&input);
         gb.exec_frame();
 
         surface.with_lock_mut(|r| {
@@ -132,26 +132,28 @@ fn main(file: PathBuf) -> Result<()> {
 
         canvas.present();
 
-        // let audio_buf = gb.get_audio_buf();
-        // assert!(
-        //     (799..=801).contains(&audio_buf.len()),
-        //     "invalid generated audio length: {}",
-        //     audio_buf.len()
-        // );
+        let audio_buf = gb.audio_buffer().borrow();
+        assert!(
+            (799..=801).contains(&audio_buf.buf.len()),
+            "invalid generated audio length: {}",
+            audio_buf.buf.len()
+        );
 
-        // while device.size() > 2048 * 2 {
-        //     std::thread::sleep(Duration::from_millis(1));
-        // }
+        while device.size() > 2048 * 2 * 2 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
 
-        // device.queue(
-        //     &audio_buf
-        //         .iter()
-        //         .map(|s| /*audio_filter.run(*s)*/ *s)
-        //         .collect::<Vec<_>>(),
-        // );
+        device.queue(
+            &audio_buf
+                .buf
+                .iter()
+                .map(|s| [s.right, s.left])
+                .flatten()
+                .collect::<Vec<_>>(),
+        );
 
         // FIXME
-        timer.wait_for_frame(FPS);
+        timer.wait_for_frame(FPS * 2.0);
     }
 
     Ok(())

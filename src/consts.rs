@@ -14,3 +14,5 @@ pub const INT_LCD_STAT: u8 = 1 << 1;
 pub const INT_TIMER: u8 = 1 << 2;
 pub const INT_SERIAL: u8 = 1 << 3;
 pub const INT_JOYPAD: u8 = 1 << 4;
+
+pub const AUDIO_SAMPLE_PER_FRAME: u64 = 800;

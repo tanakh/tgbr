@@ -1,4 +1,4 @@
-use log::trace;
+use log::{trace, warn};
 
 use crate::{io::Io, mbc::Mbc, util::Ref};
 
@@ -47,7 +47,7 @@ impl Bus {
             0xa000..=0xbfff => self.mbc.borrow_mut().write(addr, data),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize] = data,
             0xfe00..=0xfe9f => self.oam.borrow_mut()[(addr & 0xff) as usize] = data,
-            0xfea0..=0xfeff => todo!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
+            0xfea0..=0xfeff => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
             0xff00..=0xff7f => self.io.borrow_mut().write(addr, data),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize] = data,
             0xffff => self.io.borrow_mut().write(addr, data),

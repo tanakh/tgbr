@@ -2,7 +2,7 @@ use crate::{
     bus::Bus,
     util::{ConstEval, Ref},
 };
-use log::{info, log_enabled, trace, warn, Level};
+use log::{info, log_enabled, trace, Level};
 
 use bitvec::prelude::*;
 
@@ -223,10 +223,17 @@ impl Cpu {
             if self.process_interrupt() {
                 continue;
             }
-            if !self.halting {
-                self.prev_interrupt_enable = self.interrupt_master_enable;
-                self.exec_instr();
+            if self.halting {
+                let b = *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow();
+                if b == 0 {
+                    self.counter += 1;
+                    continue;
+                }
+                self.halting = false;
+                // FIXME: halt bug?
             }
+            self.prev_interrupt_enable = self.interrupt_master_enable;
+            self.exec_instr();
         }
     }
 
@@ -238,7 +245,8 @@ impl Cpu {
         if !self.prev_interrupt_enable {
             return false;
         }
-        let b = interrupt_flag_rise & *self.interrupt_enable.borrow();
+        // let b = interrupt_flag_rise & *self.interrupt_enable.borrow();
+        let b = interrupt_flag & *self.interrupt_enable.borrow();
         if b == 0 {
             return false;
         }
@@ -249,6 +257,7 @@ impl Cpu {
                 *self.interrupt_flag.borrow_mut() &= !(1 << i);
                 self.push_u16(self.reg.pc);
                 self.reg.pc = 0x40 + i * 8;
+                self.counter += 1;
                 self.halting = false;
                 return true;
             }
@@ -310,9 +319,14 @@ impl Cpu {
                 self.reg.sp
             };
             (SPn) => {{
-                // FIXME: set flags
-                warn!("Currently SP+n does not set flags");
-                self.reg.sp.wrapping_add(self.fetch() as i8 as u16)
+                let opr = self.fetch() as i8 as u16;
+                let dst = self.reg.sp;
+                let res = dst.wrapping_add(opr);
+                self.reg.f.z = false;
+                self.reg.f.n = false;
+                self.reg.f.h = (opr ^ dst ^ res) & 0x10 != 0;
+                self.reg.f.c = (opr ^ dst ^ res) & 0x100 != 0;
+                res
             }};
             (r8) => {{
                 self.fetch() as i8
@@ -478,13 +492,13 @@ impl Cpu {
             }};
             (ADD SP, $opr:tt) => {{
                 let opr = load!($opr) as i8 as u16;
-                let dst = self.reg.hl();
+                let dst = self.reg.sp;
                 let res = dst.wrapping_add(opr);
                 self.reg.f.z = false;
                 self.reg.f.n = false;
                 self.reg.f.h = (opr ^ dst ^ res) & 0x10 != 0;
                 self.reg.f.c = (opr ^ dst ^ res) & 0x100 != 0;
-                self.reg.set_hl(res);
+                self.reg.sp = res;
             }};
             (ADC A, $opr:tt) => {{
                 let opr = load!($opr);
@@ -566,8 +580,8 @@ impl Cpu {
                 if std::mem::size_of_val(&opr) == 1 {
                     let res = opr.wrapping_sub(1);
                     self.reg.f.z = res == 0;
-                    self.reg.f.n = false;
-                    self.reg.f.h = (opr ^ res) & 0x10 == 0;
+                    self.reg.f.n = true;
+                    self.reg.f.h = (opr ^ res) & 0x10 != 0;
                     store!($opr, res);
                 } else {
                     let res = opr.wrapping_sub(1);
@@ -585,16 +599,15 @@ impl Cpu {
                 store!($opr, res);
             }};
             (DAA) => {{
-                let mut a = self.reg.a;
                 let mut adjust = 0;
                 adjust |= if self.reg.f.c { 0x60 } else { 0 };
                 adjust |= if self.reg.f.h { 0x06 } else { 0 };
                 let res = if !self.reg.f.n {
-                    adjust |= if a & 0x0f > 0x09 { 0x06 } else { 0 };
-                    adjust |= if a > 0x99 { 0x60 } else { 0 };
-                    a.wrapping_add(adjust)
+                    adjust |= if self.reg.a & 0x0f > 0x09 { 0x06 } else { 0 };
+                    adjust |= if self.reg.a > 0x99 { 0x60 } else { 0 };
+                    self.reg.a.wrapping_add(adjust)
                 } else {
-                    a.wrapping_sub(adjust)
+                    self.reg.a.wrapping_sub(adjust)
                 };
                 self.reg.a = res;
                 self.reg.f.z = res == 0;
@@ -631,48 +644,50 @@ impl Cpu {
             }};
 
             (RLCA) => {
-                gen_mne!(RLC A)
+                // RLCA always reset Z flag
+                // RLC A sets Z flag if result is zero
+                gen_mne!(RLC A, false)
             };
             (RLA) => {
-                gen_mne!(RL A)
+                gen_mne!(RL A, false)
             };
             (RRCA) => {
-                gen_mne!(RRC A)
+                gen_mne!(RRC A, false)
             };
             (RRA) => {
-                gen_mne!(RR A)
+                gen_mne!(RR A, false)
             };
-            (RLC $opr:tt) => {{
+            (RLC $opr:tt $(, $f:literal)?) => {{
                 let opr = load!($opr);
                 let res = opr.rotate_left(1);
-                self.reg.f.z = res == 0;
+                self.reg.f.z = res == 0 $(&& $f)*;
                 self.reg.f.n = false;
                 self.reg.f.h = false;
                 self.reg.f.c = (opr & 0x80) != 0;
                 store!($opr, res);
             }};
-            (RL $opr:tt) => {{
+            (RL $opr:tt $(, $f:literal)?) => {{
                 let opr = load!($opr);
                 let res = opr << 1 | self.reg.f.c as u8;
-                self.reg.f.z = res == 0;
+                self.reg.f.z = res == 0 $(&& $f)*;
                 self.reg.f.n = false;
                 self.reg.f.h = false;
                 self.reg.f.c = (opr & 0x80) != 0;
                 store!($opr, res);
             }};
-            (RRC $opr:tt) => {{
+            (RRC $opr:tt $(, $f:literal)?) => {{
                 let opr = load!($opr);
                 let res = opr.rotate_right(1);
-                self.reg.f.z = res == 0;
+                self.reg.f.z = res == 0 $(&& $f)*;
                 self.reg.f.n = false;
                 self.reg.f.h = false;
                 self.reg.f.c = (opr & 0x01) != 0;
                 store!($opr, res);
             }};
-            (RR $opr:tt) => {{
+            (RR $opr:tt $(, $f:literal)?) => {{
                 let opr = load!($opr);
                 let res = opr >> 1 | (self.reg.f.c as u8) << 7;
-                self.reg.f.z = res == 0;
+                self.reg.f.z = res == 0 $(&& $f)*;
                 self.reg.f.n = false;
                 self.reg.f.h = false;
                 self.reg.f.c = (opr & 0x01) != 0;
@@ -724,45 +739,54 @@ impl Cpu {
 
             (JP nn) => {{
                 self.reg.pc = load!(nn);
+                self.counter += 1;
             }};
             (JP (HL)) => {{
                 self.reg.pc = self.reg.hl();
+                self.counter += 1;
             }};
             (JP $cc:tt, nn) => {{
                 let addr = load!(nn);
                 if cond!($cc) {
                     self.reg.pc = addr;
+                    self.counter += 1;
                 }
             }};
             (JR $opr:tt) => {{
                 let r = load!($opr) as u16;
                 self.reg.pc = self.reg.pc.wrapping_add(r);
+                self.counter += 1;
             }};
             (JR $cc:tt, $opr:tt) => {{
                 let r = load!($opr) as u16;
                 if cond!($cc) {
                     self.reg.pc = self.reg.pc.wrapping_add(r);
+                    self.counter += 1;
                 }
             }};
             (CALL $opr:tt) => {{
                 let addr = load!($opr);
                 self.push_u16(self.reg.pc);
                 self.reg.pc = addr;
+                self.counter += 1;
             }};
             (CALL $cc:tt, $opr:tt) => {{
                 let addr = load!($opr);
                 if cond!($cc) {
                     self.push_u16(self.reg.pc);
                     self.reg.pc = addr;
+                    self.counter += 1;
                 }
             }};
             (RST $opr:expr) => {{
                 self.push_u16(self.reg.pc);
                 self.reg.pc = $opr;
+                self.counter += 1;
             }};
 
             (RET) => {{
                 self.reg.pc = self.pop_u16();
+                self.counter += 1;
             }};
             (RET $cc:tt) => {{
                 if cond!($cc) {
@@ -771,6 +795,7 @@ impl Cpu {
             }};
             (RETI) => {{
                 self.reg.pc = self.pop_u16();
+                self.counter += 1;
                 self.interrupt_master_enable = true;
             }};
 
@@ -885,7 +910,7 @@ impl Cpu {
         trace!(
             "{pc:04X}: {bytes:8} | {asm:16} | \
             A:{a:02X} B:{b:02X} C:{c:02X} D:{d:02X} E:{e:02X} H:{h:02X} L:{l:02X} \
-            SP:{sp:04X} F:{zf}{nf}{hf}{cf} CYC:{cyc}",
+            SP:{sp:04X} F:{zf}{nf}{hf}{cf} IME:{ime} IE:{ie:02X} IF:{inf:02X} CYC:{cyc}",
             a = self.reg.a,
             b = self.reg.b,
             c = self.reg.c,
@@ -898,6 +923,9 @@ impl Cpu {
             nf = if self.reg.f.n { 'N' } else { '.' },
             hf = if self.reg.f.h { 'H' } else { '.' },
             cf = if self.reg.f.c { 'C' } else { '.' },
+            ime = self.interrupt_master_enable as u8,
+            ie = *self.interrupt_enable.borrow(),
+            inf = *self.interrupt_flag.borrow(),
             cyc = self.counter
         );
     }

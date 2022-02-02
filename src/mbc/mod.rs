@@ -44,18 +44,6 @@ impl Mbc for NullMbc {
     }
 }
 
-struct XXX {}
-
-impl Mbc for XXX {
-    fn read(&mut self, addr: u16) -> u8 {
-        todo!()
-    }
-
-    fn write(&mut self, addr: u16, data: u8) {
-        todo!()
-    }
-}
-
 pub fn create_mbc(rom: &Ref<Rom>) -> Ref<dyn Mbc> {
     let cart_type = rom.borrow().cartridge_type.clone();
     match cart_type.mbc {
