@@ -38,8 +38,8 @@ impl Mbc for NullMbc {
     fn read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x3fff => self.rom.borrow().data[addr as usize],
-            0x4000..=0x7fff => self.rom.borrow().data[(addr + 0x4000) as usize],
-            _ => unreachable!(),
+            0x4000..=0x7fff => self.rom.borrow().data[addr as usize],
+            _ => unreachable!("{:04X}", addr),
         }
     }
 }

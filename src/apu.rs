@@ -24,9 +24,9 @@ pub struct Apu {
     audio_buffer: Ref<AudioBuffer>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct ChannelCtrl {
-    output: bool,
+    vin_enable: bool,
     volume: u8,
     output_ch: [bool; 4],
 }
@@ -47,22 +47,15 @@ impl Apu {
         }
     }
 
-    fn power_on(&mut self) {
-        if self.power_on {
-            return;
-        }
-
-        self.power_on = true;
+    fn set_power(&mut self, on: bool) {
+        self.power_on = on;
         self.frame_sequencer_div.reset();
         self.frame_sequencer_step = 0;
         self.channel_ctrl = Default::default();
-        self.pulse = Default::default();
-        self.wave = Default::default();
-        self.noise = Default::default();
-    }
-
-    fn power_off(&mut self) {
-        self.power_on = false;
+        self.pulse[0].reset();
+        self.pulse[1].reset();
+        self.wave.reset();
+        self.noise.reset();
     }
 
     pub fn tick(&mut self) {
@@ -137,9 +130,6 @@ impl Apu {
         let mut output = [0, 0];
 
         for i in 0..2 {
-            if !self.channel_ctrl[i].output {
-                continue;
-            }
             for j in 0..4 {
                 if self.channel_ctrl[i].output_ch[j] {
                     output[i] += ch_output[j];
@@ -151,6 +141,120 @@ impl Apu {
         // TODO: high-pass filter
 
         AudioSample::new(output[0], output[1])
+    }
+}
+
+#[rustfmt::skip]
+const REGISTER_NAME: &[&str] = &[
+    "NR10", "NR11", "NR12", "NR13", "NR14",
+    "????", "NR21", "NR22", "NR23", "NR24",
+    "NR30", "NR31", "NR32", "NR33", "NR34",
+    "????", "NR41", "NR42", "NR43", "NR44",
+    "NR50", "NR51", "NR52",
+    "????", "????", "????", "????", "????", "????", "????", "????", "????",
+];
+
+fn register_name(addr: u16) -> String {
+    match addr {
+        0xFF10..=0xFF2F => REGISTER_NAME[(addr - 0xFF10) as usize].to_string(),
+        _ => format!("WAVE[${:X}]", addr - 0xFF30),
+    }
+}
+
+impl Apu {
+    pub fn read(&mut self, addr: u16) -> u8 {
+        let data = match addr {
+            0xFF10..=0xFF14 => self.pulse[0].read((addr - 0xFF10) as usize),
+            0xFF15 => !0,
+            0xFF16..=0xFF19 => self.pulse[1].read((addr - 0xFF15) as usize),
+            0xFF1A..=0xFF1E => self.wave.read((addr - 0xFF1A) as usize),
+            0xFF1F => !0,
+            0xFF20..=0xFF23 => self.noise.read((addr - 0xFF20) as usize),
+
+            // NR50: Channel control / ON-OFF / Volume (R/W)
+            0xFF24 => pack! {
+                7     => self.channel_ctrl[1].vin_enable,
+                4..=6 => self.channel_ctrl[1].volume,
+                3     => self.channel_ctrl[0].vin_enable,
+                0..=2 => self.channel_ctrl[0].volume,
+            },
+            // NR51: Selection of Sound output terminal (R/W)
+            0xFF25 => pack! {
+                7 => self.channel_ctrl[1].output_ch[3],
+                6 => self.channel_ctrl[1].output_ch[2],
+                5 => self.channel_ctrl[1].output_ch[1],
+                4 => self.channel_ctrl[1].output_ch[0],
+                3 => self.channel_ctrl[0].output_ch[3],
+                2 => self.channel_ctrl[0].output_ch[2],
+                1 => self.channel_ctrl[0].output_ch[1],
+                0 => self.channel_ctrl[0].output_ch[0],
+            },
+            // NR52: Sound on/off (R/W)
+            0xFF26 => pack! {
+                7 => self.power_on,
+                4..=6 => !0,
+                3 => self.noise.on,
+                2 => self.wave.on,
+                1 => self.pulse[1].on,
+                0 => self.pulse[0].on,
+            },
+
+            0xFF27..=0xFF2F => !0,
+
+            // Wave Pattern RAM
+            0xFF30..=0xFF3F => self.wave.ram[(addr & 0xf) as usize],
+
+            _ => unreachable!(),
+        };
+        trace!(
+            "Read from APU register: {}( = ${addr:04X}) = ${data:02X}",
+            register_name(addr)
+        );
+        data
+    }
+
+    pub fn write(&mut self, addr: u16, data: u8) {
+        trace!(
+            "Write to APU register: {}(= ${addr:04X}) = ${data:02X}",
+            register_name(addr)
+        );
+        match addr {
+            0xFF10..=0xFF14 => self.pulse[0].write((addr - 0xFF10) as usize, data),
+            0xFF15 => {}
+            0xFF16..=0xFF19 => self.pulse[1].write((addr - 0xFF15) as usize, data),
+            0xFF1A..=0xFF1E => self.wave.write((addr - 0xFF1A) as usize, data),
+            0xFF1F => {}
+            0xFF20..=0xFF23 => self.noise.write((addr - 0xFF20) as usize, data),
+
+            // NR50: Channel control / ON-OFF / Volume (R/W)
+            0xFF24 => {
+                let v = data.view_bits::<Lsb0>();
+                self.channel_ctrl[1].vin_enable = v[7];
+                self.channel_ctrl[1].volume = v[4..=6].load();
+                self.channel_ctrl[0].vin_enable = v[3];
+                self.channel_ctrl[0].volume = v[0..=2].load();
+            }
+            // NR51: Selection of Sound output terminal (R/W)
+            0xFF25 => {
+                let v = data.view_bits::<Lsb0>();
+                self.channel_ctrl[1].output_ch[3] = v[7];
+                self.channel_ctrl[1].output_ch[2] = v[6];
+                self.channel_ctrl[1].output_ch[1] = v[5];
+                self.channel_ctrl[1].output_ch[0] = v[4];
+                self.channel_ctrl[0].output_ch[3] = v[3];
+                self.channel_ctrl[0].output_ch[2] = v[2];
+                self.channel_ctrl[0].output_ch[1] = v[1];
+                self.channel_ctrl[0].output_ch[0] = v[0];
+            }
+            // NR52: Sound on/off (R/W)
+            0xFF26 => self.set_power(data.view_bits::<Lsb0>()[7]),
+            0xFF27..=0xFF2F => {}
+
+            // Wave Pattern RAM
+            0xFF30..=0xFF3F => self.wave.ram[(addr & 0xf) as usize] = data,
+
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -178,6 +282,10 @@ struct Pulse {
 }
 
 impl Pulse {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     // Square 1
     // NR10 FF10 -PPP NSSS Sweep period, negate, shift
     // NR11 FF11 DDLL LLLL Duty, Length load (64-L)
@@ -196,29 +304,29 @@ impl Pulse {
         match regno {
             // NR10: Channel 1 Sweep register (R/W)
             0 => pack! {
-                    4..=6 => self.sweep_period,
-                    3     => self.sweep_negate,
-                    0..=2 => self.sweep_shift,
+                7     => true,
+                4..=6 => self.sweep_period,
+                3     => self.sweep_negate,
+                0..=2 => self.sweep_shift,
             },
             // NR11/NR21: Channel 1/2 Sound length/Wave pattern duty (R/W)
             // Only bits 7-6 can be read.
-            1 => pack!(6..=7 => self.duty),
+            1 => pack!(6..=7 => self.duty, 0..=5 => !0),
             // NR12/NR22: Channel 1/2 Envelope (R/W)
-            2 => {
-                pack! {
-                    4..=7 => self.initial_volume,
-                    3     => self.envelope_inc,
-                    0..=2 => self.envelope_period,
-                }
-            }
+            2 => pack! {
+                4..=7 => self.initial_volume,
+                3     => self.envelope_inc,
+                0..=2 => self.envelope_period,
+            },
             // NR13/NR23: Channel 1/2 Frequency lo (W)
-            3 => {
-                warn!("Read from NR13/NR23");
-                0x00
-            }
+            3 => !0,
             // NR14/NR24: Channel 1/2 Frequency hi (R/W)
             // Only bit 6 can be read
-            4 => pack!(6 => self.length_enable),
+            4 => pack! {
+                7 => true,
+                6 => self.length_enable,
+                0..=5 => !0,
+            },
             _ => unreachable!(),
         }
     }
@@ -246,7 +354,7 @@ impl Pulse {
                 self.envelope_period = v[0..=2].load();
             }
             // NR13/NR23: Channel 1/2 Frequency lo (W)
-            3 => self.frequency.view_bits_mut::<Lsb0>()[0..7].store(data),
+            3 => self.frequency.view_bits_mut::<Lsb0>()[0..=7].store(data),
             // NR14/NR24: Channel 1/2 Frequency hi (R/W)
             4 => {
                 let v = data.view_bits::<Lsb0>();
@@ -271,7 +379,7 @@ impl Pulse {
             self.length = 64;
         }
 
-        self.frequency_timer = self.frequency;
+        self.frequency_timer = (2048 - self.frequency) * 4;
 
         // The volume envelope and sweep timers treat a period of 0 as 8.
         self.envelope_timer = if self.envelope_period == 0 {
@@ -291,18 +399,16 @@ impl Pulse {
     }
 
     fn tick(&mut self) {
-        if self.frequency_timer > 0 {
-            self.frequency_timer -= 1;
-        }
+        self.frequency_timer = self.frequency_timer.saturating_sub(1);
         if self.frequency_timer == 0 {
-            self.frequency_timer = self.frequency;
+            self.frequency_timer = (2048 - self.frequency) * 4;
             self.phase = (self.phase + 1) % 8;
         }
     }
 
     fn length_tick(&mut self) {
-        if self.length_enable && self.length > 0 {
-            self.length -= 1;
+        if self.length_enable {
+            self.length = self.length.saturating_sub(1);
             if self.length == 0 {
                 self.on = false;
             }
@@ -380,6 +486,13 @@ struct Wave {
 }
 
 impl Wave {
+    fn reset(&mut self) {
+        // Powering APU shouldn't affect wave
+        let t = self.ram.clone();
+        *self = Default::default();
+        self.ram = t;
+    }
+
     // NR30 FF1A E--- ---- DAC power
     // NR31 FF1B LLLL LLLL Length load (256-L)
     // NR32 FF1C -VV- ---- Volume code (00=0%, 01=100%, 10=50%, 11=25%)
@@ -389,19 +502,16 @@ impl Wave {
     fn read(&mut self, regno: usize) -> u8 {
         match regno {
             // NR30: Channel 3 Sound on/off (R/W)
-            0 => pack!(7 => self.enable),
+            0 => pack!(7 => self.enable, 0..=6 => !0),
             // NR31: Channel 3 Sound length (R/W)
-            1 => 0x00, // ???
+            1 => !0, // ???
             // NR32: Channel 3 Select output level (R/W)
-            2 => pack!(5..=6 => self.output_level),
+            2 => pack!(5..=6 => self.output_level, 7 => true, 0..=4 => !0),
             // NR33: Channel 3 Frequency lo (W)
-            3 => {
-                warn!("Read from NR33");
-                0x00
-            }
+            3 => !0,
             // NR34: Channel 3 Frequency hi (R/W)
             // Only bit 6 can be read
-            4 => pack!(6 => self.length_enable),
+            4 => pack!(6 => self.length_enable, 7 => true, 0..=5 => !0),
             _ => unreachable!(),
         }
     }
@@ -415,7 +525,7 @@ impl Wave {
             // NR32: Channel 3 Select output level (R/W)
             2 => self.output_level = data.view_bits::<Lsb0>()[5..=6].load(),
             // NR33: Channel 3 Frequency lo (W)
-            3 => self.frequency.view_bits_mut::<Lsb0>()[0..7].store(data),
+            3 => self.frequency.view_bits_mut::<Lsb0>()[0..=7].store(data),
             // NR34: Channel 3 Frequency hi (R/W)
             4 => {
                 let v = data.view_bits::<Lsb0>();
@@ -438,16 +548,14 @@ impl Wave {
         if self.length == 0 {
             self.length = 256;
         }
-        self.frequency_timer = self.frequency;
+        self.frequency_timer = (2048 - self.frequency) * 2;
         self.pos = 0;
     }
 
     fn tick(&mut self) {
-        if self.frequency_timer > 0 {
-            self.frequency_timer -= 1;
-        }
+        self.frequency_timer = self.frequency_timer.saturating_sub(1);
         if self.frequency_timer == 0 {
-            self.frequency_timer = self.frequency;
+            self.frequency_timer = (2048 - self.frequency) * 2;
             self.pos = (self.pos + 1) % 32;
             let v = self.ram[self.pos as usize / 2];
             self.sample_latch = if self.pos % 2 == 0 { v >> 4 } else { v & 0x0F };
@@ -455,8 +563,8 @@ impl Wave {
     }
 
     fn length_tick(&mut self) {
-        if self.length_enable && self.length > 0 {
-            self.length -= 1;
+        if self.length_enable {
+            self.length = self.length.saturating_sub(1);
             if self.length == 0 {
                 self.on = false;
             }
@@ -498,6 +606,10 @@ struct Noise {
 static DIVISOR: [u8; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
 impl Noise {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     // Noise
     // FF1F ---- ---- Not used
     // NR41 FF20 --LL LLLL Length load (64-L)
@@ -508,7 +620,7 @@ impl Noise {
     fn read(&mut self, regno: usize) -> u8 {
         match regno {
             // NR41: Channel 4 Sound length (R/W)
-            0 => 0x00, // ???
+            0 => !0,
             // NR42: Channel 4 Volume Envelope (R/W)
             1 => pack! {
                 4..=7 => self.initial_volume,
@@ -522,10 +634,8 @@ impl Noise {
                 0..=2 => self.divisor_code,
             },
             // NR44: Channel 4 Counter/consecutive; initial (R/W)
-            3 => {
-                // Only bit 6 can be read
-                pack!(6 => self.length_enable)
-            }
+            // Only bit 6 can be read
+            3 => pack!(6 => self.length_enable, 7 => true, 0..=5 => !0),
             _ => unreachable!(),
         }
     }
@@ -593,8 +703,8 @@ impl Noise {
     }
 
     fn length_tick(&mut self) {
-        if self.length_enable && self.length > 0 {
-            self.length -= 1;
+        if self.length_enable {
+            self.length = self.length.saturating_sub(1);
             if self.length == 0 {
                 self.on = false;
             }
@@ -602,16 +712,14 @@ impl Noise {
     }
 
     fn envelope_tick(&mut self) {
-        if self.envelope_timer > 0 {
-            self.envelope_timer -= 1;
-            if self.envelope_timer == 0 && self.envelope_period > 0 {
-                self.envelope_timer = self.envelope_period;
+        self.envelope_timer = self.envelope_timer.saturating_sub(1);
+        if self.envelope_timer == 0 && self.envelope_period > 0 {
+            self.envelope_timer = self.envelope_period;
 
-                if self.envelope_inc {
-                    self.current_volume = min(15, self.current_volume + 1);
-                } else {
-                    self.current_volume = self.current_volume.saturating_sub(1);
-                }
+            if self.envelope_inc {
+                self.current_volume = min(15, self.current_volume + 1);
+            } else {
+                self.current_volume = self.current_volume.saturating_sub(1);
             }
         }
     }
@@ -621,95 +729,6 @@ impl Noise {
             None
         } else {
             Some(((self.lsfr & 1) ^ 1) as u8 * self.current_volume)
-        }
-    }
-}
-
-impl Apu {
-    pub fn read(&mut self, addr: u16) -> u8 {
-        let data = match addr {
-            0xFF10..=0xFF14 => self.pulse[0].read((addr - 0xFF10) as usize),
-            0xFF16..=0xFF19 => self.pulse[1].read((addr - 0xFF15) as usize),
-            0xFF1A..=0xFF1E => self.wave.read((addr - 0xFF1A) as usize),
-            0xFF20..=0xFF23 => self.noise.read((addr - 0xFF20) as usize),
-
-            // NR50: Channel control / ON-OFF / Volume (R/W)
-            0xFF24 => pack! {
-                7     => self.channel_ctrl[0].output,
-                4..=6 => self.channel_ctrl[0].volume,
-                3     => self.channel_ctrl[1].output,
-                0..=2 => self.channel_ctrl[1].volume,
-            },
-            // NR51: Selection of Sound output terminal (R/W)
-            0xFF25 => pack! {
-                7 => self.channel_ctrl[0].output_ch[3],
-                6 => self.channel_ctrl[0].output_ch[2],
-                5 => self.channel_ctrl[0].output_ch[1],
-                4 => self.channel_ctrl[0].output_ch[0],
-                3 => self.channel_ctrl[1].output_ch[3],
-                2 => self.channel_ctrl[1].output_ch[2],
-                1 => self.channel_ctrl[1].output_ch[1],
-                0 => self.channel_ctrl[1].output_ch[0],
-            },
-            // NR52: Sound on/off (R/W)
-            0xFF26 => pack! {
-                7 => self.power_on,
-                3 => self.noise.on,
-                2 => self.wave.on,
-                1 => self.pulse[1].on,
-                0 => self.pulse[0].on,
-            },
-
-            // Wave Pattern RAM
-            0xFF30..=0xFF3F => self.wave.ram[(addr & 0xf) as usize],
-
-            _ => unreachable!(),
-        };
-        trace!("Read from APU register: {addr:04X} = {data:02X}");
-        data
-    }
-
-    pub fn write(&mut self, addr: u16, data: u8) {
-        trace!("Write to APU register: {addr:04X} = {data:02X}");
-        match addr {
-            0xFF10..=0xFF14 => self.pulse[0].write((addr - 0xFF10) as usize, data),
-            0xFF16..=0xFF19 => self.pulse[1].write((addr - 0xFF16) as usize, data),
-            0xFF1A..=0xFF1E => self.wave.write((addr - 0xFF1A) as usize, data),
-            0xFF20..=0xFF23 => self.noise.write((addr - 0xFF20) as usize, data),
-
-            // NR50: Channel control / ON-OFF / Volume (R/W)
-            0xFF24 => {
-                let v = data.view_bits::<Lsb0>();
-                self.channel_ctrl[1].output = v[7];
-                self.channel_ctrl[1].volume = v[4..=6].load();
-                self.channel_ctrl[0].output = v[3];
-                self.channel_ctrl[0].volume = v[0..=2].load();
-            }
-            // NR51: Selection of Sound output terminal (R/W)
-            0xFF25 => {
-                let v = data.view_bits::<Lsb0>();
-                self.channel_ctrl[1].output_ch[3] = v[7];
-                self.channel_ctrl[1].output_ch[2] = v[6];
-                self.channel_ctrl[1].output_ch[1] = v[5];
-                self.channel_ctrl[1].output_ch[0] = v[4];
-                self.channel_ctrl[0].output_ch[3] = v[3];
-                self.channel_ctrl[0].output_ch[2] = v[2];
-                self.channel_ctrl[0].output_ch[1] = v[1];
-                self.channel_ctrl[0].output_ch[0] = v[0];
-            }
-            // NR52: Sound on/off (R/W)
-            0xFF26 => {
-                if data.view_bits::<Lsb0>()[7] {
-                    self.power_on()
-                } else {
-                    self.power_off()
-                }
-            }
-
-            // Wave Pattern RAM
-            0xFF30..=0xFF3F => self.wave.ram[(addr & 0xf) as usize] = data,
-
-            _ => todo!(),
         }
     }
 }

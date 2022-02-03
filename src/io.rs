@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use log::{trace, warn};
+use log::{info, trace, warn};
 
 use crate::{apu::Apu, consts::INT_TIMER, interface::Input, ppu::Ppu, util::Ref};
 
@@ -89,14 +89,16 @@ impl Io {
             0x00 => {
                 let mut ret = 0x0f;
                 let v = ret.view_bits_mut::<Lsb0>();
+                v.set(4, self.select_direction_buttons);
+                v.set(5, self.select_action_buttons);
                 let r = &self.input.pad;
-                if self.select_action_buttons {
+                if !self.select_action_buttons {
                     v.set(0, v[0] && !r.a);
                     v.set(1, v[1] && !r.b);
                     v.set(2, v[2] && !r.select);
                     v.set(3, v[3] && !r.start);
                 }
-                if self.select_direction_buttons {
+                if !self.select_direction_buttons {
                     v.set(0, v[0] && !r.right);
                     v.set(1, v[1] && !r.left);
                     v.set(2, v[2] && !r.up);
@@ -134,7 +136,7 @@ impl Io {
             0xff => *self.interrupt_enable.borrow(),
 
             // APU Registers
-            0x20..=0x3F => self.apu.borrow_mut().read(addr),
+            0x10..=0x3F => self.apu.borrow_mut().read(addr),
             // PPU Registers
             0x40..=0x4B => self.ppu.borrow_mut().read(addr),
 
@@ -160,11 +162,11 @@ impl Io {
             }
             // SB: Serial transfer data (R/W)
             0x01 => {
-                warn!("Write to SB: ${data:02X} = {}", data as char);
+                info!("Write to SB: ${data:02X} = {}", data as char);
             }
             // SC: Serial transfer control (R/W)
             0x02 => {
-                // warn!("Write to SC: {data:02X}");
+                info!("Write to SC: {data:02X}");
             }
             // DIV: Divider register (R/W)
             0x04 => self.divider = 0,
@@ -184,7 +186,7 @@ impl Io {
             0xff => *self.interrupt_enable.borrow_mut() = data & 0x1f,
 
             // APU Registers
-            0x20..=0x3F => self.apu.borrow_mut().write(addr, data),
+            0x10..=0x3F => self.apu.borrow_mut().write(addr, data),
             // PPU Registers
             0x40..=0x4B => self.ppu.borrow_mut().write(addr, data),
 

@@ -230,6 +230,7 @@ impl Cpu {
                     continue;
                 }
                 self.halting = false;
+                info!("WAKE UP");
                 // FIXME: halt bug?
             }
             self.prev_interrupt_enable = self.interrupt_master_enable;
@@ -326,6 +327,7 @@ impl Cpu {
                 self.reg.f.n = false;
                 self.reg.f.h = (opr ^ dst ^ res) & 0x10 != 0;
                 self.reg.f.c = (opr ^ dst ^ res) & 0x100 != 0;
+                self.counter += 1;
                 res
             }};
             (r8) => {{
@@ -449,6 +451,10 @@ impl Cpu {
         }
 
         macro_rules! gen_mne {
+            (LD SP, HL) => {{
+                self.reg.sp = self.reg.hl();
+                self.counter += 1;
+            }};
             (LD $dst:tt, $src:tt) => {{
                 let src = load!($src);
                 store!($dst, src);
@@ -466,6 +472,7 @@ impl Cpu {
             (PUSH $opr:tt) => {{
                 let data = load!($opr);
                 self.push_u16(data);
+                self.counter += 1;
             }};
             (POP $opr:tt) => {{
                 let data = self.pop_u16();
@@ -483,6 +490,7 @@ impl Cpu {
             }};
             (ADD HL, $opr:tt) => {{
                 let opr = load!($opr);
+                self.counter += 1;
                 let dst = self.reg.hl();
                 let (res, overflow) = dst.overflowing_add(opr);
                 self.reg.f.n = false;
@@ -492,6 +500,7 @@ impl Cpu {
             }};
             (ADD SP, $opr:tt) => {{
                 let opr = load!($opr) as i8 as u16;
+                self.counter += 2;
                 let dst = self.reg.sp;
                 let res = dst.wrapping_add(opr);
                 self.reg.f.z = false;
@@ -571,6 +580,7 @@ impl Cpu {
                     self.reg.f.h = (opr ^ res) & 0x10 != 0;
                     store!($opr, res);
                 } else {
+                    self.counter += 1;
                     let res = opr.wrapping_add(1);
                     store!($opr, res);
                 }
@@ -584,6 +594,7 @@ impl Cpu {
                     self.reg.f.h = (opr ^ res) & 0x10 != 0;
                     store!($opr, res);
                 } else {
+                    self.counter += 1;
                     let res = opr.wrapping_sub(1);
                     store!($opr, res);
                 }
@@ -632,10 +643,12 @@ impl Cpu {
             (NOP) => {{}};
             (HALT) => {{
                 self.halting = true;
+                info!("HALT");
             }};
-            (STOP) => {
-                todo!("STOP")
-            };
+            (STOP) => {{
+                self.halting = true;
+                info!("STOP");
+            }};
             (DI) => {{
                 self.interrupt_master_enable = false;
             }};
@@ -743,7 +756,6 @@ impl Cpu {
             }};
             (JP (HL)) => {{
                 self.reg.pc = self.reg.hl();
-                self.counter += 1;
             }};
             (JP $cc:tt, nn) => {{
                 let addr = load!(nn);
@@ -785,12 +797,14 @@ impl Cpu {
             }};
 
             (RET) => {{
-                self.reg.pc = self.pop_u16();
                 self.counter += 1;
+                self.reg.pc = self.pop_u16();
             }};
             (RET $cc:tt) => {{
+                self.counter += 1;
                 if cond!($cc) {
                     self.reg.pc = self.pop_u16();
+                    self.counter += 1;
                 }
             }};
             (RETI) => {{
