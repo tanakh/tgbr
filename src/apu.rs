@@ -1,7 +1,7 @@
 use std::cmp::min;
 
 use bitvec::prelude::*;
-use log::{trace, warn};
+use log::trace;
 
 use crate::{
     consts::{AUDIO_SAMPLE_PER_FRAME, DOTS_PER_LINE, LINES_PER_FRAME},
@@ -60,44 +60,31 @@ impl Apu {
 
     pub fn tick(&mut self) {
         if self.power_on {
-            self.pulse[0].tick();
-            self.pulse[1].tick();
-            self.wave.tick();
-            self.noise.tick();
-
             if self.frame_sequencer_div.tick() {
-                // Step   Length Ctr  Vol Env     Sweep
-                // ---------------------------------------
-                // 0      Clock       -           -
-                // 1      -           -           -
-                // 2      Clock       -           Clock
-                // 3      -           -           -
-                // 4      Clock       -           -
-                // 5      -           -           -
-                // 6      Clock       -           Clock
-                // 7      -           Clock       -
-                // ---------------------------------------
-                // Rate   256 Hz      64 Hz       128 Hz
-
                 self.frame_sequencer_step += 1;
-
-                if self.frame_sequencer_step % 2 == 0 {
-                    self.pulse[0].length_tick();
-                    self.pulse[1].length_tick();
-                    self.wave.length_tick();
-                    self.noise.length_tick();
-                }
-
-                if self.frame_sequencer_step % 8 == 7 {
-                    self.pulse[0].envelope_tick();
-                    self.pulse[1].envelope_tick();
-                    self.noise.envelope_tick();
-                }
-
-                if self.frame_sequencer_step % 4 == 2 {
-                    self.pulse[0].sweep_tick();
-                }
             }
+
+            // Step   Length Ctr  Vol Env     Sweep
+            // ---------------------------------------
+            // 0      Clock       -           -
+            // 1      -           -           -
+            // 2      Clock       -           Clock
+            // 3      -           -           -
+            // 4      Clock       -           -
+            // 5      -           -           -
+            // 6      Clock       -           Clock
+            // 7      -           Clock       -
+            // ---------------------------------------
+            // Rate   256 Hz      64 Hz       128 Hz
+
+            let length_tick = self.frame_sequencer_step % 2 == 0;
+            let envelope_tick = self.frame_sequencer_step % 8 == 7;
+            let sweep_tick = self.frame_sequencer_step % 4 == 2;
+
+            self.pulse[0].tick(length_tick, envelope_tick, sweep_tick);
+            self.pulse[1].tick(length_tick, envelope_tick, false);
+            self.wave.tick(length_tick);
+            self.noise.tick(length_tick, envelope_tick);
         }
 
         // AUDIO_SAMPLE_PER_FRAME samples per DOTS_PER_LINE * LINES_PER_FRAME
@@ -207,16 +194,18 @@ impl Apu {
             _ => unreachable!(),
         };
         trace!(
-            "Read from APU register: {}( = ${addr:04X}) = ${data:02X}",
-            register_name(addr)
+            "Read from APU register: {}( = ${addr:04X}) = ${data:02X}, frame_div: {:?}",
+            register_name(addr),
+            self.frame_sequencer_div
         );
         data
     }
 
     pub fn write(&mut self, addr: u16, data: u8) {
         trace!(
-            "Write to APU register: {}(= ${addr:04X}) = ${data:02X}",
-            register_name(addr)
+            "Write to APU register: {}(= ${addr:04X}) = ${data:02X}, frame_div: {:?}",
+            register_name(addr),
+            self.frame_sequencer_div
         );
         match addr {
             0xFF10..=0xFF14 => self.pulse[0].write((addr - 0xFF10) as usize, data),
@@ -258,7 +247,7 @@ impl Apu {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Pulse {
     sweep_period: u8,
     sweep_negate: bool,
@@ -279,6 +268,10 @@ struct Pulse {
     sweep_enable: bool,
     frequency_timer: u16,
     phase: usize,
+
+    prev_length_tick: bool,
+    prev_envelope_tick: bool,
+    prev_sweep_tick: bool,
 }
 
 impl Pulse {
@@ -366,6 +359,9 @@ impl Pulse {
             }
             _ => unreachable!(),
         }
+        if !self.dac_enable() {
+            self.on = false;
+        }
     }
 
     fn dac_enable(&self) -> bool {
@@ -398,12 +394,29 @@ impl Pulse {
         self.sweep_enable = self.sweep_period > 0 || self.sweep_shift > 0;
     }
 
-    fn tick(&mut self) {
+    fn tick(&mut self, length_tick: bool, envelope_tick: bool, sweep_tick: bool) {
         self.frequency_timer = self.frequency_timer.saturating_sub(1);
         if self.frequency_timer == 0 {
             self.frequency_timer = (2048 - self.frequency) * 4;
             self.phase = (self.phase + 1) % 8;
         }
+
+        let length_tick = length_tick && self.length_enable;
+        if !self.prev_length_tick && length_tick {
+            self.length_tick();
+        }
+
+        if !self.prev_envelope_tick && envelope_tick {
+            self.envelope_tick();
+        }
+
+        if !self.prev_sweep_tick && sweep_tick {
+            self.sweep_tick();
+        }
+
+        self.prev_length_tick = length_tick;
+        self.prev_envelope_tick = envelope_tick;
+        self.prev_sweep_tick = sweep_tick;
     }
 
     fn length_tick(&mut self) {
@@ -483,6 +496,8 @@ struct Wave {
     frequency_timer: u16,
     sample_latch: u8,
     pos: u8,
+
+    prev_length_tick: bool,
 }
 
 impl Wave {
@@ -537,6 +552,9 @@ impl Wave {
             }
             _ => unreachable!(),
         }
+        if !self.dac_enable() {
+            self.on = false;
+        }
     }
 
     fn dac_enable(&self) -> bool {
@@ -552,7 +570,7 @@ impl Wave {
         self.pos = 0;
     }
 
-    fn tick(&mut self) {
+    fn tick(&mut self, length_tick: bool) {
         self.frequency_timer = self.frequency_timer.saturating_sub(1);
         if self.frequency_timer == 0 {
             self.frequency_timer = (2048 - self.frequency) * 2;
@@ -560,6 +578,13 @@ impl Wave {
             let v = self.ram[self.pos as usize / 2];
             self.sample_latch = if self.pos % 2 == 0 { v >> 4 } else { v & 0x0F };
         }
+
+        let length_tick = length_tick && self.length_enable;
+        if !self.prev_length_tick && length_tick {
+            self.length_tick();
+        }
+
+        self.prev_length_tick = length_tick;
     }
 
     fn length_tick(&mut self) {
@@ -601,6 +626,9 @@ struct Noise {
     divisor_timer: u8,
     shift_clock_timer: u16,
     lsfr: u16,
+
+    prev_length_tick: bool,
+    prev_envelope_tick: bool,
 }
 
 static DIVISOR: [u8; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
@@ -668,6 +696,9 @@ impl Noise {
             }
             _ => unreachable!(),
         }
+        if !self.dac_enable() {
+            self.on = false;
+        }
     }
 
     fn dac_enable(&self) -> bool {
@@ -685,7 +716,7 @@ impl Noise {
         self.shift_clock_timer = 1 << (self.clock_shift + 1);
     }
 
-    fn tick(&mut self) {
+    fn tick(&mut self, length_tick: bool, envelope_tick: bool) {
         self.shift_clock_timer = self.shift_clock_timer.saturating_sub(1);
         if self.shift_clock_timer == 0 {
             self.shift_clock_timer = 1 << (self.clock_shift + 1);
@@ -700,6 +731,18 @@ impl Noise {
                 };
             }
         }
+
+        let length_tick = length_tick && self.length_enable;
+        if !self.prev_length_tick && length_tick {
+            self.length_tick();
+        }
+
+        if !self.prev_envelope_tick && envelope_tick {
+            self.envelope_tick();
+        }
+
+        self.prev_length_tick = length_tick;
+        self.prev_envelope_tick = envelope_tick;
     }
 
     fn length_tick(&mut self) {
