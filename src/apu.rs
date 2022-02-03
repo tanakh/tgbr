@@ -34,7 +34,7 @@ struct ChannelCtrl {
 impl Apu {
     pub fn new(audio_buffer: &Ref<AudioBuffer>) -> Self {
         Self {
-            pulse: Default::default(),
+            pulse: [Pulse::new(true), Pulse::new(false)],
             wave: Default::default(),
             noise: Default::default(),
             channel_ctrl: Default::default(),
@@ -247,9 +247,11 @@ impl Apu {
 
 #[derive(Default, Debug)]
 struct Pulse {
+    has_sweep_unit: bool,
     sweep_period: u8,
     sweep_negate: bool,
     sweep_shift: u8,
+
     duty: u8,
     length: u8, // Sound Length = (64-t1)*(1/256) seconds
     initial_volume: u8,
@@ -261,9 +263,12 @@ struct Pulse {
     on: bool,
     current_volume: u8,
     envelope_timer: u8,
+
+    sweep_enable: bool,
+    freq_calculated_in_negate_mode: bool,
     current_frequency: u16,
     sweep_timer: u8,
-    sweep_enable: bool,
+
     frequency_timer: u16,
     phase: usize,
 
@@ -276,8 +281,15 @@ struct Pulse {
 }
 
 impl Pulse {
+    fn new(has_sweeep_unit: bool) -> Self {
+        Self {
+            has_sweep_unit: has_sweeep_unit,
+            ..Default::default()
+        }
+    }
+
     fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self::new(self.has_sweep_unit);
     }
 
     // Square 1
@@ -329,10 +341,21 @@ impl Pulse {
         match regno {
             // NR10: Channel 1 Sweep register (R/W)
             0 => {
+                let prev_sweep_negate = self.sweep_negate;
+
                 let v = data.view_bits::<Lsb0>();
                 self.sweep_period = v[4..=6].load();
                 self.sweep_negate = v[3];
                 self.sweep_shift = v[0..=2].load();
+
+                // neg -> pos after freq calculation disables channel
+                if self.sweep_enable
+                    && self.freq_calculated_in_negate_mode
+                    && (prev_sweep_negate && !self.sweep_negate)
+                {
+                    self.on = false;
+                    self.freq_calculated_in_negate_mode = false;
+                }
             }
             // NR11/NR21: Channel1/2 Sound length/Wave pattern duty (R/W)
             1 => {
@@ -373,6 +396,7 @@ impl Pulse {
 
     fn trigger(&mut self) {
         self.on = self.dac_enable();
+        self.freq_calculated_in_negate_mode = false;
 
         if self.length == 0 {
             self.length = 64;
@@ -388,26 +412,28 @@ impl Pulse {
         };
         self.current_volume = self.initial_volume;
 
+        self.sweep_timer = self.sweep_period();
+        self.sweep_enable = self.sweep_period != 0 || self.sweep_shift != 0;
         self.current_frequency = self.frequency;
-        self.sweep_timer = if self.sweep_period == 0 {
-            8
-        } else {
-            self.sweep_period
-        };
-        self.sweep_enable = self.sweep_period > 0 || self.sweep_shift > 0;
-
-        if self.sweep_shift > 0 {
-            if self.new_freq() > 2047 {
-                self.on = false;
-            }
+        if self.sweep_shift != 0 && self.new_freq() > 2047 {
+            self.on = false;
         }
     }
 
-    fn new_freq(&self) -> u16 {
+    fn new_freq(&mut self) -> u16 {
         if self.sweep_negate {
+            self.freq_calculated_in_negate_mode = true;
             self.current_frequency - (self.current_frequency >> self.sweep_shift)
         } else {
             self.current_frequency + (self.current_frequency >> self.sweep_shift)
+        }
+    }
+
+    fn sweep_period(&self) -> u8 {
+        if self.sweep_period == 0 {
+            8
+        } else {
+            self.sweep_period
         }
     }
 
@@ -475,21 +501,20 @@ impl Pulse {
     }
 
     fn sweep_tick(&mut self) {
-        if self.sweep_timer > 0 {
-            self.sweep_timer -= 1;
-            if self.sweep_timer == 0 {
-                if self.sweep_enable && self.sweep_period > 0 {
-                    self.sweep_timer = self.sweep_period;
-                    let mut new_freq = self.new_freq();
-                    if new_freq <= 2047 && self.sweep_shift > 0 {
-                        self.current_frequency = new_freq;
-                        self.frequency = new_freq;
-                        // After updating frequency, calculates a second time
-                        new_freq = self.new_freq();
-                    }
-                    if new_freq > 2047 {
-                        self.on = false;
-                    }
+        let prev_timer = self.sweep_timer;
+        self.sweep_timer = self.sweep_timer.saturating_sub(1);
+
+        if prev_timer > 0 && self.sweep_timer == 0 {
+            self.sweep_timer = self.sweep_period();
+            if self.sweep_enable && self.sweep_period > 0 {
+                let new_freq = self.new_freq();
+                if new_freq <= 2047 && self.sweep_shift > 0 {
+                    self.current_frequency = new_freq;
+                    self.frequency = new_freq;
+                }
+                // recalculate new frequency
+                if self.new_freq() > 2047 {
+                    self.on = false;
                 }
             }
         }
