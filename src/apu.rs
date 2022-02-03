@@ -194,18 +194,16 @@ impl Apu {
             _ => unreachable!(),
         };
         trace!(
-            "Read from APU register: {}( = ${addr:04X}) = ${data:02X}, frame_div: {:?}",
+            "Read from APU register: {}( = ${addr:04X}) = ${data:02X}",
             register_name(addr),
-            self.frame_sequencer_div
         );
         data
     }
 
     pub fn write(&mut self, addr: u16, data: u8) {
         trace!(
-            "Write to APU register: {}(= ${addr:04X}) = ${data:02X}, frame_div: {:?}",
+            "Write to APU register: {}(= ${addr:04X}) = ${data:02X}",
             register_name(addr),
-            self.frame_sequencer_div
         );
         match addr {
             0xFF10..=0xFF14 => self.pulse[0].write((addr - 0xFF10) as usize, data),
@@ -269,8 +267,11 @@ struct Pulse {
     frequency_timer: u16,
     phase: usize,
 
+    length_tick_in: bool,
     prev_length_tick: bool,
+    envelope_tick_in: bool,
     prev_envelope_tick: bool,
+    sweep_tick_in: bool,
     prev_sweep_tick: bool,
 }
 
@@ -353,8 +354,9 @@ impl Pulse {
                 let v = data.view_bits::<Lsb0>();
                 self.frequency.view_bits_mut::<Lsb0>()[8..=10].store(v[0..=2].load::<u16>());
                 self.length_enable = v[6];
+                self.update_tick();
                 if v[7] {
-                    self.restart();
+                    self.trigger();
                 }
             }
             _ => unreachable!(),
@@ -362,13 +364,14 @@ impl Pulse {
         if !self.dac_enable() {
             self.on = false;
         }
+        self.update_tick();
     }
 
     fn dac_enable(&self) -> bool {
         self.initial_volume > 0 || self.envelope_inc
     }
 
-    fn restart(&mut self) {
+    fn trigger(&mut self) {
         self.on = self.dac_enable();
 
         if self.length == 0 {
@@ -401,21 +404,35 @@ impl Pulse {
             self.phase = (self.phase + 1) % 8;
         }
 
-        let length_tick = length_tick && self.length_enable;
-        if !self.prev_length_tick && length_tick {
-            self.length_tick();
+        self.length_tick_in = length_tick;
+        self.envelope_tick_in = envelope_tick;
+        self.sweep_tick_in = sweep_tick;
+
+        self.update_tick();
+    }
+
+    fn update_tick(&mut self) {
+        loop {
+            let length_tick = self.length_tick_in && self.length_enable && self.length > 0;
+            if self.prev_length_tick == length_tick {
+                break;
+            }
+            if !self.prev_length_tick && length_tick {
+                self.length_tick();
+            }
+            self.prev_length_tick = length_tick;
         }
 
+        let envelope_tick = self.envelope_tick_in;
         if !self.prev_envelope_tick && envelope_tick {
             self.envelope_tick();
         }
+        self.prev_envelope_tick = envelope_tick;
 
+        let sweep_tick = self.sweep_tick_in;
         if !self.prev_sweep_tick && sweep_tick {
             self.sweep_tick();
         }
-
-        self.prev_length_tick = length_tick;
-        self.prev_envelope_tick = envelope_tick;
         self.prev_sweep_tick = sweep_tick;
     }
 
@@ -497,6 +514,7 @@ struct Wave {
     sample_latch: u8,
     pos: u8,
 
+    length_tick_in: bool,
     prev_length_tick: bool,
 }
 
@@ -546,8 +564,9 @@ impl Wave {
                 let v = data.view_bits::<Lsb0>();
                 self.frequency.view_bits_mut::<Lsb0>()[8..=10].store(v[0..=2].load::<u16>());
                 self.length_enable = v[6];
+                self.update_tick();
                 if v[7] {
-                    self.restart();
+                    self.trigger();
                 }
             }
             _ => unreachable!(),
@@ -555,13 +574,14 @@ impl Wave {
         if !self.dac_enable() {
             self.on = false;
         }
+        self.update_tick();
     }
 
     fn dac_enable(&self) -> bool {
         self.enable
     }
 
-    fn restart(&mut self) {
+    fn trigger(&mut self) {
         self.on = self.dac_enable();
         if self.length == 0 {
             self.length = 256;
@@ -579,12 +599,21 @@ impl Wave {
             self.sample_latch = if self.pos % 2 == 0 { v >> 4 } else { v & 0x0F };
         }
 
-        let length_tick = length_tick && self.length_enable;
-        if !self.prev_length_tick && length_tick {
-            self.length_tick();
-        }
+        self.length_tick_in = length_tick;
+        self.update_tick();
+    }
 
-        self.prev_length_tick = length_tick;
+    fn update_tick(&mut self) {
+        loop {
+            let length_tick = self.length_tick_in && self.length_enable && self.length > 0;
+            if self.prev_length_tick == length_tick {
+                break;
+            }
+            if !self.prev_length_tick && length_tick {
+                self.length_tick();
+            }
+            self.prev_length_tick = length_tick;
+        }
     }
 
     fn length_tick(&mut self) {
@@ -627,7 +656,9 @@ struct Noise {
     shift_clock_timer: u16,
     lsfr: u16,
 
+    length_tick_in: bool,
     prev_length_tick: bool,
+    envelope_tick_in: bool,
     prev_envelope_tick: bool,
 }
 
@@ -690,8 +721,9 @@ impl Noise {
             3 => {
                 let v = data.view_bits::<Lsb0>();
                 self.length_enable = v[6];
+                self.update_tick();
                 if v[7] {
-                    self.restart();
+                    self.trigger();
                 }
             }
             _ => unreachable!(),
@@ -699,13 +731,14 @@ impl Noise {
         if !self.dac_enable() {
             self.on = false;
         }
+        self.update_tick();
     }
 
     fn dac_enable(&self) -> bool {
         self.initial_volume > 0 || self.envelope_inc
     }
 
-    fn restart(&mut self) {
+    fn trigger(&mut self) {
         self.on = self.dac_enable();
         if self.length == 0 {
             self.length = 64;
@@ -732,17 +765,28 @@ impl Noise {
             }
         }
 
-        let length_tick = length_tick && self.length_enable;
-        if !self.prev_length_tick && length_tick {
-            self.length_tick();
+        self.length_tick_in = length_tick;
+        self.envelope_tick_in = envelope_tick;
+        self.update_tick();
+    }
+
+    fn update_tick(&mut self) {
+        loop {
+            let length_tick = self.length_tick_in && self.length_enable && self.length > 0;
+            if self.prev_length_tick == length_tick {
+                break;
+            }
+
+            if !self.prev_length_tick && length_tick {
+                self.length_tick();
+            }
+            self.prev_length_tick = length_tick;
         }
 
-        if !self.prev_envelope_tick && envelope_tick {
+        if !self.prev_envelope_tick && self.envelope_tick_in {
             self.envelope_tick();
         }
-
-        self.prev_length_tick = length_tick;
-        self.prev_envelope_tick = envelope_tick;
+        self.prev_envelope_tick = self.envelope_tick_in;
     }
 
     fn length_tick(&mut self) {
