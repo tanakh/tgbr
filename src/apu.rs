@@ -395,6 +395,20 @@ impl Pulse {
             self.sweep_period
         };
         self.sweep_enable = self.sweep_period > 0 || self.sweep_shift > 0;
+
+        if self.sweep_shift > 0 {
+            if self.new_freq() > 2047 {
+                self.on = false;
+            }
+        }
+    }
+
+    fn new_freq(&self) -> u16 {
+        if self.sweep_negate {
+            self.current_frequency - (self.current_frequency >> self.sweep_shift)
+        } else {
+            self.current_frequency + (self.current_frequency >> self.sweep_shift)
+        }
     }
 
     fn tick(&mut self, length_tick: bool, envelope_tick: bool, sweep_tick: bool) {
@@ -466,14 +480,12 @@ impl Pulse {
             if self.sweep_timer == 0 {
                 if self.sweep_enable && self.sweep_period > 0 {
                     self.sweep_timer = self.sweep_period;
-                    let new_freq = if self.sweep_negate {
-                        self.current_frequency - (self.current_frequency >> self.sweep_shift)
-                    } else {
-                        self.current_frequency + (self.current_frequency >> self.sweep_shift)
-                    };
+                    let mut new_freq = self.new_freq();
                     if new_freq <= 2047 && self.sweep_shift > 0 {
                         self.current_frequency = new_freq;
                         self.frequency = new_freq;
+                        // After updating frequency, calculates a second time
+                        new_freq = self.new_freq();
                     }
                     if new_freq > 2047 {
                         self.on = false;
