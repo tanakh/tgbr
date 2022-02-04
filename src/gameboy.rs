@@ -88,22 +88,17 @@ impl GameBoy {
         }
     }
 
-    pub fn set_input(&mut self, input: &Input) {
-        self.io.borrow_mut().set_input(input);
-    }
-
     pub fn exec_frame(&mut self) {
         self.audio_buffer.borrow_mut().buf.clear();
-        let start_frame = self.ppu.borrow().frame();
 
+        let start_frame = self.ppu.borrow().frame();
         while start_frame == self.ppu.borrow().frame() {
-            self.cpu.tick();
-            self.io.borrow_mut().tick();
-            for _ in 0..4 {
-                self.ppu.borrow_mut().tick();
-                self.apu.borrow_mut().tick();
-            }
+            self.cpu.step();
         }
+    }
+
+    pub fn set_input(&mut self, input: &Input) {
+        self.io.borrow_mut().set_input(input);
     }
 
     pub fn frame_buffer(&self) -> &Ref<FrameBuffer> {

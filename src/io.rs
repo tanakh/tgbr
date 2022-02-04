@@ -51,6 +51,11 @@ impl Io {
     }
 
     pub fn tick(&mut self) {
+        for _ in 0..4 {
+            self.ppu.borrow_mut().tick();
+            self.apu.borrow_mut().tick();
+        }
+
         self.divider_counter += 1;
         if self.divider_counter == 64 {
             self.divider_counter = 0;

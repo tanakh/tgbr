@@ -68,4 +68,8 @@ impl Bus {
         };
         Some(data)
     }
+
+    pub fn tick(&mut self) {
+        self.io.borrow_mut().tick();
+    }
 }

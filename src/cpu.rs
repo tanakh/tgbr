@@ -11,8 +11,8 @@ pub struct Cpu {
     interrupt_master_enable: bool,
     prev_interrupt_enable: bool,
     reg: Register,
-    counter: u64,
-    world: u64,
+    cycle: u64,
+    period: u64,
     interrupt_enable: Ref<u8>,
     interrupt_flag: Ref<u8>,
     prev_interrupt_flag: u8,
@@ -204,8 +204,8 @@ impl Cpu {
             halting: false,
             interrupt_master_enable: false,
             prev_interrupt_enable: false,
-            counter: 0,
-            world: 0,
+            cycle: 0,
+            period: 0,
             interrupt_enable: Ref::clone(interrupt_enable),
             interrupt_flag: Ref::clone(interrupt_flag),
             prev_interrupt_flag: 0,
@@ -217,16 +217,16 @@ impl Cpu {
         &mut self.reg
     }
 
-    pub fn tick(&mut self) {
-        self.world += 1;
-        while self.counter < self.world {
+    pub fn step(&mut self) {
+        self.period += 1;
+        while self.cycle < self.period {
             if self.process_interrupt() {
                 continue;
             }
             if self.halting {
                 let b = *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow();
                 if b == 0 {
-                    self.counter += 1;
+                    self.tick();
                     continue;
                 }
                 self.halting = false;
@@ -258,7 +258,7 @@ impl Cpu {
                 *self.interrupt_flag.borrow_mut() &= !(1 << i);
                 self.push_u16(self.reg.pc);
                 self.reg.pc = 0x40 + i * 8;
-                self.counter += 1;
+                self.tick();
                 self.halting = false;
                 return true;
             }
@@ -327,7 +327,7 @@ impl Cpu {
                 self.reg.f.n = false;
                 self.reg.f.h = (opr ^ dst ^ res) & 0x10 != 0;
                 self.reg.f.c = (opr ^ dst ^ res) & 0x100 != 0;
-                self.counter += 1;
+                self.tick();
                 res
             }};
             (r8) => {{
@@ -453,7 +453,7 @@ impl Cpu {
         macro_rules! gen_mne {
             (LD SP, HL) => {{
                 self.reg.sp = self.reg.hl();
-                self.counter += 1;
+                self.tick();
             }};
             (LD $dst:tt, $src:tt) => {{
                 let src = load!($src);
@@ -472,7 +472,7 @@ impl Cpu {
             (PUSH $opr:tt) => {{
                 let data = load!($opr);
                 self.push_u16(data);
-                self.counter += 1;
+                self.tick();
             }};
             (POP $opr:tt) => {{
                 let data = self.pop_u16();
@@ -490,7 +490,7 @@ impl Cpu {
             }};
             (ADD HL, $opr:tt) => {{
                 let opr = load!($opr);
-                self.counter += 1;
+                self.tick();
                 let dst = self.reg.hl();
                 let (res, overflow) = dst.overflowing_add(opr);
                 self.reg.f.n = false;
@@ -500,7 +500,8 @@ impl Cpu {
             }};
             (ADD SP, $opr:tt) => {{
                 let opr = load!($opr) as i8 as u16;
-                self.counter += 2;
+                self.tick();
+                self.tick();
                 let dst = self.reg.sp;
                 let res = dst.wrapping_add(opr);
                 self.reg.f.z = false;
@@ -580,7 +581,7 @@ impl Cpu {
                     self.reg.f.h = (opr ^ res) & 0x10 != 0;
                     store!($opr, res);
                 } else {
-                    self.counter += 1;
+                    self.tick();
                     let res = opr.wrapping_add(1);
                     store!($opr, res);
                 }
@@ -594,7 +595,7 @@ impl Cpu {
                     self.reg.f.h = (opr ^ res) & 0x10 != 0;
                     store!($opr, res);
                 } else {
-                    self.counter += 1;
+                    self.tick();
                     let res = opr.wrapping_sub(1);
                     store!($opr, res);
                 }
@@ -752,7 +753,7 @@ impl Cpu {
 
             (JP nn) => {{
                 self.reg.pc = load!(nn);
-                self.counter += 1;
+                self.tick();
             }};
             (JP (HL)) => {{
                 self.reg.pc = self.reg.hl();
@@ -761,55 +762,55 @@ impl Cpu {
                 let addr = load!(nn);
                 if cond!($cc) {
                     self.reg.pc = addr;
-                    self.counter += 1;
+                    self.tick();
                 }
             }};
             (JR $opr:tt) => {{
                 let r = load!($opr) as u16;
                 self.reg.pc = self.reg.pc.wrapping_add(r);
-                self.counter += 1;
+                self.tick();
             }};
             (JR $cc:tt, $opr:tt) => {{
                 let r = load!($opr) as u16;
                 if cond!($cc) {
                     self.reg.pc = self.reg.pc.wrapping_add(r);
-                    self.counter += 1;
+                    self.tick();
                 }
             }};
             (CALL $opr:tt) => {{
                 let addr = load!($opr);
                 self.push_u16(self.reg.pc);
                 self.reg.pc = addr;
-                self.counter += 1;
+                self.tick();
             }};
             (CALL $cc:tt, $opr:tt) => {{
                 let addr = load!($opr);
                 if cond!($cc) {
                     self.push_u16(self.reg.pc);
                     self.reg.pc = addr;
-                    self.counter += 1;
+                    self.tick();
                 }
             }};
             (RST $opr:expr) => {{
                 self.push_u16(self.reg.pc);
                 self.reg.pc = $opr;
-                self.counter += 1;
+                self.tick();
             }};
 
             (RET) => {{
-                self.counter += 1;
+                self.tick();
                 self.reg.pc = self.pop_u16();
             }};
             (RET $cc:tt) => {{
-                self.counter += 1;
+                self.tick();
                 if cond!($cc) {
                     self.reg.pc = self.pop_u16();
-                    self.counter += 1;
+                    self.tick();
                 }
             }};
             (RETI) => {{
                 self.reg.pc = self.pop_u16();
-                self.counter += 1;
+                self.tick();
                 self.interrupt_master_enable = true;
             }};
 
@@ -856,14 +857,20 @@ impl Cpu {
 }
 
 impl Cpu {
+    fn tick(&mut self) {
+        self.cycle += 1;
+        self.bus.borrow_mut().tick();
+    }
+
     fn read(&mut self, addr: u16) -> u8 {
-        self.counter += 1;
-        self.bus.borrow_mut().read(addr)
+        let data = self.bus.borrow_mut().read(addr);
+        self.tick();
+        data
     }
 
     fn write(&mut self, addr: u16, data: u8) {
-        self.counter += 1;
-        self.bus.borrow_mut().write(addr, data)
+        self.bus.borrow_mut().write(addr, data);
+        self.tick();
     }
 
     fn write_u16(&mut self, addr: u16, data: u16) {
@@ -940,7 +947,7 @@ impl Cpu {
             ime = self.interrupt_master_enable as u8,
             ie = *self.interrupt_enable.borrow(),
             inf = *self.interrupt_flag.borrow(),
-            cyc = self.counter
+            cyc = self.cycle
         );
     }
 }
