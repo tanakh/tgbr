@@ -39,7 +39,7 @@ impl Apu {
             noise: Default::default(),
             channel_ctrl: Default::default(),
             power_on: false,
-            frame_sequencer_step: 0,
+            frame_sequencer_step: 7,
             sampling_counter: 0,
 
             frame_sequencer_div: ClockDivider::with_period(8192),
@@ -48,14 +48,32 @@ impl Apu {
     }
 
     fn set_power(&mut self, on: bool) {
+        if self.power_on == on {
+            return;
+        }
+
         self.power_on = on;
         self.frame_sequencer_div.reset();
-        self.frame_sequencer_step = 0;
+        self.frame_sequencer_step = 7;
         self.channel_ctrl = Default::default();
+
+        // except on the DMG, where length counters are unaffected by power and can still be written while off
+        // FIXME: CGB mode
+
+        let ch1_len = self.pulse[0].length;
+        let ch2_len = self.pulse[1].length;
+        let ch3_len = self.wave.length;
+        let ch4_len = self.noise.length;
+
         self.pulse[0].reset();
         self.pulse[1].reset();
         self.wave.reset();
         self.noise.reset();
+
+        self.pulse[0].length = ch1_len;
+        self.pulse[1].length = ch2_len;
+        self.wave.length = ch3_len;
+        self.noise.length = ch4_len;
     }
 
     pub fn tick(&mut self) {
@@ -376,8 +394,15 @@ impl Pulse {
             4 => {
                 let v = data.view_bits::<Lsb0>();
                 self.frequency.view_bits_mut::<Lsb0>()[8..=10].store(v[0..=2].load::<u16>());
+
+                let prev_length_enable = self.length_enable;
                 self.length_enable = v[6];
-                self.update_tick();
+
+                // Extra length clogking
+                if self.length_tick_in && !prev_length_enable && self.length_enable {
+                    self.length_tick();
+                }
+
                 if v[7] {
                     self.trigger();
                 }
@@ -387,7 +412,6 @@ impl Pulse {
         if !self.dac_enable() {
             self.on = false;
         }
-        self.update_tick();
     }
 
     fn dac_enable(&self) -> bool {
@@ -400,6 +424,9 @@ impl Pulse {
 
         if self.length == 0 {
             self.length = 64;
+            if self.length_tick_in && self.length_enable {
+                self.length_tick();
+            }
         }
 
         self.frequency_timer = (2048 - self.frequency) * 4;
@@ -452,16 +479,11 @@ impl Pulse {
     }
 
     fn update_tick(&mut self) {
-        loop {
-            let length_tick = self.length_tick_in && self.length_enable && self.length > 0;
-            if self.prev_length_tick == length_tick {
-                break;
-            }
-            if !self.prev_length_tick && length_tick {
-                self.length_tick();
-            }
-            self.prev_length_tick = length_tick;
+        let length_tick = self.length_tick_in;
+        if !self.prev_length_tick && length_tick && self.length_enable {
+            self.length_tick();
         }
+        self.prev_length_tick = length_tick;
 
         let envelope_tick = self.envelope_tick_in;
         if !self.prev_envelope_tick && envelope_tick {
@@ -477,11 +499,9 @@ impl Pulse {
     }
 
     fn length_tick(&mut self) {
-        if self.length_enable {
-            self.length = self.length.saturating_sub(1);
-            if self.length == 0 {
-                self.on = false;
-            }
+        self.length = self.length.saturating_sub(1);
+        if self.length == 0 {
+            self.on = false;
         }
     }
 
