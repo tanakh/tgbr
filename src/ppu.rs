@@ -6,7 +6,7 @@ use crate::{
         DOTS_PER_LINE, INT_LCD_STAT, INT_VBLANK, LINES_PER_FRAME, SCREEN_WIDTH, VISIBLE_RANGE,
     },
     interface::{Color, FrameBuffer},
-    util::Ref,
+    util::{pack, Ref},
 };
 
 const DMG_PALETTE: [Color; 4] = [
@@ -15,6 +15,10 @@ const DMG_PALETTE: [Color; 4] = [
     Color::new(85, 85, 85),
     Color::new(0, 0, 0),
 ];
+
+const ATTR_NONE: u8 = 0;
+const ATTR_BG: u8 = 1;
+const ATTR_OBJ: u8 = 2;
 
 pub struct Ppu {
     ppu_enable: bool,                     // 0=off, 1=on
@@ -46,6 +50,7 @@ pub struct Ppu {
     frame: u64,
 
     line_buffer: [u8; SCREEN_WIDTH as usize],
+    line_buffer_attr: [u8; SCREEN_WIDTH as usize],
     frame_buffer: Ref<FrameBuffer>,
 
     vram: Ref<Vec<u8>>,
@@ -85,6 +90,7 @@ impl Ppu {
             lx: 0,
             frame: 0,
             line_buffer: [0; SCREEN_WIDTH as usize],
+            line_buffer_attr: [0; SCREEN_WIDTH as usize],
             frame_buffer: Ref::clone(frame_buffer),
             vram: Ref::clone(vram),
             oam: Ref::clone(oam),
@@ -130,10 +136,10 @@ impl Ppu {
             if self.ly == LINES_PER_FRAME as u8 {
                 self.ly = 0;
                 self.frame += 1;
+            }
 
-                if self.ly == self.lyc && self.lyc_interrupt_enable {
-                    *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
-                }
+            if self.ly == self.lyc && self.lyc_interrupt_enable {
+                *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
             }
         }
     }
@@ -145,31 +151,25 @@ impl Ppu {
     pub fn read(&mut self, addr: u16) -> u8 {
         match addr & 0xff {
             // LCDC: LCD Control (R/W)
-            0x40 => {
-                let mut ret = 0;
-                let v = ret.view_bits_mut::<Lsb0>();
-                v.set(0, self.ppu_enable);
-                v.set(1, self.window_tile_map_select);
-                v.set(2, self.window_enable);
-                v.set(3, self.bg_and_window_tile_data_select);
-                v.set(4, self.bg_tile_map_select);
-                v.set(5, self.obj_size);
-                v.set(6, self.obj_enable);
-                v.set(7, self.bg_and_window_enable);
-                ret
-            }
+            0x40 => pack! {
+                7 => self.ppu_enable,
+                6 => self.window_tile_map_select,
+                5 => self.window_enable,
+                4 => self.bg_and_window_tile_data_select,
+                3 => self.bg_tile_map_select,
+                2 => self.obj_size,
+                1 => self.obj_enable,
+                0 => self.bg_and_window_enable,
+            },
             // STAT: LCDC Status (R/W)
-            0x41 => {
-                let mut ret = 0;
-                let v = ret.view_bits_mut::<Lsb0>();
-                v.set(6, self.lyc_interrupt_enable);
-                v.set(5, self.oam_interrupt_enable);
-                v.set(4, self.vblank_interrupt_enable);
-                v.set(3, self.hblank_interrupt_enable);
-                v.set(2, self.lyc == self.ly);
-                v[0..=1].store(self.mode);
-                ret
-            }
+            0x41 => pack! {
+                6     => self.lyc_interrupt_enable,
+                5     => self.oam_interrupt_enable,
+                4     => self.vblank_interrupt_enable,
+                3     => self.hblank_interrupt_enable,
+                2     => self.lyc == self.ly,
+                0..=1 => self.mode,
+            },
             // SCY: Scroll Y (R/W)
             0x42 => self.scroll_y,
             // SCX: Scroll X (R/W)
@@ -179,25 +179,21 @@ impl Ppu {
             // LYC: LY Compare (R/W)
             0x45 => self.lyc,
             // BGP: BG Palette Data (R/W)
-            0x47 => {
-                let mut ret = 0;
-                let v = ret.view_bits_mut::<Lsb0>();
-                v[0..=1].store(self.bg_palette[0]);
-                v[2..=3].store(self.bg_palette[1]);
-                v[4..=5].store(self.bg_palette[2]);
-                v[6..=7].store(self.bg_palette[3]);
-                ret
-            }
+            0x47 => pack! {
+                6..=7 => self.bg_palette[3],
+                4..=5 => self.bg_palette[2],
+                2..=3 => self.bg_palette[1],
+                0..=1 => self.bg_palette[0],
+            },
             // OBP0/1: Object Palette 0/1 Data (R/W)
             0x48 | 0x49 => {
                 let ix = (addr & 0x1) as usize;
-                let mut ret = 0;
-                let v = ret.view_bits_mut::<Lsb0>();
-                v[0..=1].store(self.obj_palette[ix][0]);
-                v[2..=3].store(self.obj_palette[ix][1]);
-                v[4..=5].store(self.obj_palette[ix][2]);
-                v[6..=7].store(self.obj_palette[ix][3]);
-                ret
+                pack! {
+                    6..=7 => self.obj_palette[ix][3],
+                    4..=5 => self.obj_palette[ix][2],
+                    2..=3 => self.obj_palette[ix][1],
+                    0..=1 => self.obj_palette[ix][0],
+                }
             }
             // WY: Window Y Position (R/W)
             0x4a => self.window_y,
@@ -239,31 +235,35 @@ impl Ppu {
             0x43 => self.scroll_x = data,
             // LYC: LY Compare (R/W)
             0x45 => self.lyc = data,
-            // DMA: DMA Transfer and Start Address (W)
-            0x46 => {
-                todo!("DMA")
-            }
             // BGP: BG Palette Data (R/W)
             0x47 => {
                 let v = data.view_bits::<Lsb0>();
-                self.bg_palette[0] = v[0..=1].load();
-                self.bg_palette[1] = v[2..=3].load();
-                self.bg_palette[2] = v[4..=5].load();
                 self.bg_palette[3] = v[6..=7].load();
+                self.bg_palette[2] = v[4..=5].load();
+                self.bg_palette[1] = v[2..=3].load();
+                self.bg_palette[0] = v[0..=1].load();
             }
             // OBP0/1: Object Palette 0/1 Data (R/W)
             0x48 | 0x49 => {
                 let ix = (addr & 0x1) as usize;
                 let v = data.view_bits::<Lsb0>();
-                self.obj_palette[ix][0] = v[0..=1].load();
-                self.obj_palette[ix][1] = v[2..=3].load();
-                self.obj_palette[ix][2] = v[4..=5].load();
                 self.obj_palette[ix][3] = v[6..=7].load();
+                self.obj_palette[ix][2] = v[4..=5].load();
+                self.obj_palette[ix][1] = v[2..=3].load();
+                self.obj_palette[ix][0] = v[0..=1].load();
             }
             // WY: Window Y Position (R/W)
             0x4a => self.window_y = data,
             // WX: Window X Position (R/W)
-            0x4b => self.window_x = data,
+            0x4b => {
+                self.window_x = data;
+                // WX values 0 and 166 are unreliable due to hardware bugs.
+                // If WX is set to 0, the window will “stutter” horizontally when SCX changes (depending on SCX % 8).
+                // If WX is set to 166, the window will span the entirety of the following scanline.
+                if self.window_x == 0 || self.window_x == 166 {
+                    warn!("WX value 0 or 166 is unreliable");
+                }
+            }
             _ => warn!("Unusable write to I/O: ${addr:04X} = ${data:02X}"),
         }
     }
@@ -272,6 +272,7 @@ impl Ppu {
 impl Ppu {
     fn render_line(&mut self) {
         self.line_buffer.fill(0);
+        self.line_buffer_attr.fill(ATTR_NONE);
         if self.ppu_enable && self.bg_and_window_enable {
             self.render_bg_line();
         }
@@ -288,20 +289,37 @@ impl Ppu {
     fn render_bg_line(&mut self) {
         let vram = self.vram.borrow();
         let tile_data = if self.bg_and_window_tile_data_select {
-            0x8000 - 0x8000
+            0x0000
         } else {
-            0x9000 - 0x8000
+            0x1000
         };
-        let tile_map = if self.bg_tile_map_select {
-            0x9c00 - 0x8000
+        let bg_tile_map = if self.bg_tile_map_select {
+            0x1c00
         } else {
-            0x9800 - 0x8000
+            0x1800
+        };
+        let window_tile_map = if self.window_tile_map_select {
+            0x1c00
+        } else {
+            0x1800
         };
 
         let y = self.ly.wrapping_add(self.scroll_y);
+        let is_in_window_y_range = self.ly >= self.window_y;
 
-        for sx in 0..SCREEN_WIDTH as u8 {
-            let x = sx.wrapping_add(self.scroll_x);
+        for scr_x in 0..SCREEN_WIDTH as u8 {
+            let is_in_window_x_range = scr_x + 7 >= self.window_x;
+
+            let (x, y, tile_map) =
+                if !(self.window_enable && is_in_window_y_range && is_in_window_x_range) {
+                    (scr_x.wrapping_add(self.scroll_x), y, bg_tile_map)
+                } else {
+                    (
+                        scr_x - self.window_x + 7,
+                        self.ly - self.window_y,
+                        window_tile_map,
+                    )
+                };
 
             let tile_x = x as usize / 8;
             let tile_y = y as usize / 8;
@@ -321,11 +339,97 @@ impl Ppu {
 
             let b = (lo >> (7 - ofs_x)) & 1 | ((hi >> (7 - ofs_x)) & 1) << 1;
 
-            self.line_buffer[sx as usize] = self.bg_palette[b as usize];
+            self.line_buffer[scr_x as usize] = self.bg_palette[b as usize];
+            self.line_buffer_attr[scr_x as usize] = if b != 0 { ATTR_BG } else { ATTR_NONE };
         }
     }
 
     fn render_obj_line(&mut self) {
-        todo!()
+        let oam = self.oam.borrow();
+        let vram = self.vram.borrow();
+        let w = self.line_buffer.len();
+
+        let obj_size = if self.obj_size { 16 } else { 8 };
+
+        let mut obj_count = 0;
+        let mut render_objs = [(0xff, 0xff); 10];
+
+        for i in 0..40 {
+            let r = &oam[i * 4..i * 4 + 4];
+            let y = r[0];
+            let x = r[1];
+            if (y..y + obj_size).contains(&(self.ly + 16)) {
+                render_objs[obj_count] = (x, i);
+                obj_count += 1;
+                if obj_count >= 10 {
+                    break;
+                }
+            }
+        }
+
+        // FIXME:
+        // if !cgb_mode {
+        render_objs[0..obj_count].sort();
+        // }
+
+        for i in 0..obj_count {
+            let i = render_objs[i].1;
+            let r = &oam[i * 4..i * 4 + 4];
+
+            let y = r[0];
+            let x = r[1];
+            let tile_index = r[2];
+
+            let v = r[3].view_bits::<Lsb0>();
+            let bg_and_window_over_obj = v[7];
+            let y_flip = v[6];
+            let x_flip = v[5];
+
+            // Non CGB Mode Only
+            let palette_number = v[4] as usize;
+
+            // CGB Mode Only
+            // let tile_vram_bank = v[3];
+            // let palette_number = v[0..=3].load();
+
+            let ofs_y = self.ly + 16 - y;
+
+            let tile_addr = if obj_size == 8 {
+                let ofs_y = if y_flip { 7 - ofs_y } else { ofs_y };
+                (tile_index as usize * 16) + ofs_y as usize * 2
+            } else {
+                let ofs_y = if y_flip { 15 - ofs_y } else { ofs_y };
+                ((tile_index & !1) as usize * 16 + if ofs_y >= 8 { 16 } else { 0 })
+                    + (ofs_y & 7) as usize * 2
+            };
+
+            let lo = vram[tile_addr];
+            let hi = vram[tile_addr + 1];
+
+            for ofs_x in 0..8 {
+                let scr_x = x as usize + ofs_x;
+                if !(8..w + 8).contains(&scr_x) {
+                    continue;
+                }
+                let scr_x = scr_x - 8;
+                let ofs_x = if x_flip { 7 - ofs_x } else { ofs_x };
+
+                let b = (lo >> (7 - ofs_x)) & 1 | ((hi >> (7 - ofs_x)) & 1) << 1;
+
+                if b != 0 {
+                    let c = self.obj_palette[palette_number][b as usize];
+                    match self.line_buffer_attr[scr_x] {
+                        ATTR_NONE => self.line_buffer[scr_x] = c,
+                        ATTR_BG => {
+                            if !bg_and_window_over_obj {
+                                self.line_buffer[scr_x] = c;
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.line_buffer_attr[scr_x] = ATTR_OBJ;
+                }
+            }
+        }
     }
 }
