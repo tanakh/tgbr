@@ -230,9 +230,6 @@ impl Rom {
         let old_licensee_code = header[0x4b];
 
         let mask_rom_version = header[0x4c];
-        if mask_rom_version != 0x00 {
-            bail!("Invalid mask ROM version: ${mask_rom_version:02X}");
-        }
 
         let header_checksum = header[0x4d];
 
