@@ -1,7 +1,13 @@
 use bitvec::prelude::*;
 use log::{info, trace, warn};
 
-use crate::{apu::Apu, consts::INT_TIMER, interface::Input, ppu::Ppu, util::Ref};
+use crate::{
+    apu::Apu,
+    consts::{INT_JOYPAD, INT_TIMER},
+    interface::Input,
+    ppu::Ppu,
+    util::Ref,
+};
 
 pub struct Io {
     select_action_buttons: bool,
@@ -85,30 +91,48 @@ impl Io {
     }
 
     pub fn set_input(&mut self, input: &Input) {
+        let prev_lines = self.keypad_input_lines();
         self.input = input.clone();
+        let cur_lines = self.keypad_input_lines();
+
+        for i in 0..4 {
+            if prev_lines[i] && !cur_lines[i] {
+                *self.interrupt_flag.borrow_mut() |= INT_JOYPAD;
+            }
+        }
+    }
+
+    fn keypad_input_lines(&self) -> [bool; 4] {
+        let mut lines = [true; 4];
+        let r = &self.input.pad;
+        if !self.select_action_buttons {
+            lines[0] &= !r.a;
+            lines[1] &= !r.b;
+            lines[2] &= !r.select;
+            lines[3] &= !r.start;
+        }
+        if !self.select_direction_buttons {
+            lines[0] &= !r.right;
+            lines[1] &= !r.left;
+            lines[2] &= !r.up;
+            lines[3] &= !r.down;
+        }
+        lines
     }
 
     pub fn read(&mut self, addr: u16) -> u8 {
         let ret = match addr & 0xff {
             // P1: Joypad (R/W)
             0x00 => {
-                let mut ret = 0x0f;
+                let lines = self.keypad_input_lines();
+                let mut ret = 0;
                 let v = ret.view_bits_mut::<Lsb0>();
-                v.set(4, self.select_direction_buttons);
                 v.set(5, self.select_action_buttons);
-                let r = &self.input.pad;
-                if !self.select_action_buttons {
-                    v.set(0, v[0] && !r.a);
-                    v.set(1, v[1] && !r.b);
-                    v.set(2, v[2] && !r.select);
-                    v.set(3, v[3] && !r.start);
-                }
-                if !self.select_direction_buttons {
-                    v.set(0, v[0] && !r.right);
-                    v.set(1, v[1] && !r.left);
-                    v.set(2, v[2] && !r.up);
-                    v.set(3, v[3] && !r.down);
-                }
+                v.set(4, self.select_direction_buttons);
+                v.set(3, lines[3]);
+                v.set(2, lines[2]);
+                v.set(1, lines[1]);
+                v.set(0, lines[0]);
                 ret
             }
             // SB: Serial transfer data (R/W)
