@@ -6,7 +6,7 @@ use crate::{
     consts::{INT_JOYPAD, INT_TIMER},
     interface::Input,
     ppu::Ppu,
-    util::Ref,
+    util::{pack, ClockDivider, Ref},
 };
 
 pub struct Io {
@@ -20,7 +20,7 @@ pub struct Io {
     interrupt_flag: Ref<u8>,
     interrupt_enable: Ref<u8>,
 
-    divider_counter: u8,
+    divider_counter: ClockDivider,
     timer_divider_counter: u16,
 
     ppu: Ref<Ppu>,
@@ -48,7 +48,7 @@ impl Io {
             input_clock_select: 0,
             interrupt_enable: Ref::clone(interrupt_enable),
             interrupt_flag: Ref::clone(interrupt_flag),
-            divider_counter: 0,
+            divider_counter: ClockDivider::with_period(64),
             timer_divider_counter: 0,
             ppu: Ref::clone(ppu),
             apu: Ref::clone(apu),
@@ -62,9 +62,7 @@ impl Io {
             self.apu.borrow_mut().tick();
         }
 
-        self.divider_counter += 1;
-        if self.divider_counter == 64 {
-            self.divider_counter = 0;
+        if self.divider_counter.tick() {
             self.divider = self.divider.wrapping_add(1);
         }
 
@@ -75,11 +73,6 @@ impl Io {
             let pos = TIMER_DIVIDER_BITS[self.input_clock_select as usize] as usize;
 
             if (prev & !new).view_bits::<Lsb0>()[pos - 1] {
-                // eprintln!(
-                //     "TIMER TICK: {:04X}, clock-select: {}, timer-counter: {:02X}",
-                //     self.timer_divider_counter, self.input_clock_select, self.timer_counter
-                // );
-
                 let (new_counter, overflow) = self.timer_counter.overflowing_add(1);
                 self.timer_counter = new_counter;
                 if overflow {
@@ -125,15 +118,15 @@ impl Io {
             // P1: Joypad (R/W)
             0x00 => {
                 let lines = self.keypad_input_lines();
-                let mut ret = 0;
-                let v = ret.view_bits_mut::<Lsb0>();
-                v.set(5, self.select_action_buttons);
-                v.set(4, self.select_direction_buttons);
-                v.set(3, lines[3]);
-                v.set(2, lines[2]);
-                v.set(1, lines[1]);
-                v.set(0, lines[0]);
-                ret
+                pack! {
+                    6..=7 => !0,
+                    5 => self.select_action_buttons,
+                    4 => self.select_direction_buttons,
+                    3 => lines[3],
+                    2 => lines[2],
+                    1 => lines[1],
+                    0 => lines[0],
+                }
             }
             // SB: Serial transfer data (R/W)
             0x01 => {
@@ -143,7 +136,9 @@ impl Io {
             // SC: Serial transfer control (R/W)
             0x02 => {
                 warn!("Read from SC");
-                0x00
+                pack! {
+                    1..=6 => !0,
+                }
             }
             // DIV: Divider register (R/W)
             0x04 => self.divider,
@@ -152,17 +147,21 @@ impl Io {
             // TMA: Timer modulo (R/W)
             0x06 => self.timer_modulo,
             // TAC: Timer control (R/W)
-            0x07 => {
-                let mut ret = 0;
-                let v = ret.view_bits_mut::<Lsb0>();
-                v.set(2, self.timer_enable);
-                v[0..=1].store(self.input_clock_select);
-                ret
-            }
+            0x07 => pack! {
+                3..=7 => !0,
+                2     => self.timer_enable,
+                0..=1 => self.input_clock_select,
+            },
             // IF: Interrupt flag (R/W)
-            0x0f => *self.interrupt_flag.borrow(),
+            0x0f => pack! {
+                5..=7 => !0,
+                0..=4 => *self.interrupt_flag.borrow(),
+            },
             // IE: Interrupt enable (R/W)
-            0xff => *self.interrupt_enable.borrow(),
+            0xff => pack! {
+                // 5..=7 => !0,
+                0..=7 => *self.interrupt_enable.borrow(),
+            },
 
             // APU Registers
             0x10..=0x3F => self.apu.borrow_mut().read(addr),
@@ -171,7 +170,7 @@ impl Io {
 
             _ => {
                 warn!("Unknown I/O Read: {:04X}", addr);
-                0
+                !0
             }
         };
 
@@ -198,7 +197,10 @@ impl Io {
                 info!("Write to SC: {data:02X}");
             }
             // DIV: Divider register (R/W)
-            0x04 => self.divider = 0,
+            0x04 => {
+                self.divider = 0;
+                self.divider_counter.reset();
+            }
             // TIMA: Timer counter (R/W)
             0x05 => self.timer_counter = data,
             // TMA: Timer modulo (R/W)
@@ -212,7 +214,10 @@ impl Io {
             // IF: Interrupt flag (R/W)
             0x0f => *self.interrupt_flag.borrow_mut() = data & 0x1f,
             // IE: Interrupt enable (R/W)
-            0xff => *self.interrupt_enable.borrow_mut() = data & 0x1f,
+            0xff => {
+                trace!("IE = {data:02X}");
+                *self.interrupt_enable.borrow_mut() = data
+            },
 
             // APU Registers
             0x10..=0x3F => self.apu.borrow_mut().write(addr, data),
