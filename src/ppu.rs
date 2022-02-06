@@ -123,8 +123,10 @@ impl Ppu {
             }
         } else {
             if self.mode != 1 {
+                // Enter VBlank
                 *self.interrupt_flag.borrow_mut() |= INT_VBLANK;
-                if self.vblank_interrupt_enable {
+                // OAM interrupt also triggered at the beginning of line 144
+                if self.vblank_interrupt_enable || self.oam_interrupt_enable {
                     *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
                 }
             }
