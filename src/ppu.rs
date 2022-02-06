@@ -167,6 +167,7 @@ impl Ppu {
             },
             // STAT: LCDC Status (R/W)
             0x41 => pack! {
+                7     => true,
                 6     => self.lyc_interrupt_enable,
                 5     => self.oam_interrupt_enable,
                 4     => self.vblank_interrupt_enable,
@@ -234,9 +235,25 @@ impl Ppu {
                 self.hblank_interrupt_enable = v[3];
             }
             // SCY: Scroll Y (R/W)
-            0x42 => self.scroll_y = data,
+            0x42 => {
+                log::trace!(
+                    "FRM:{} Y:{:3} X:{:3}: SCY = {data:3}",
+                    self.frame,
+                    self.ly,
+                    self.lx
+                );
+                self.scroll_y = data
+            }
             // SCX: Scroll X (R/W)
-            0x43 => self.scroll_x = data,
+            0x43 => {
+                log::trace!(
+                    "FRM:{} Y:{:3} X:{:3}: SCX = {data:3}",
+                    self.frame,
+                    self.ly,
+                    self.lx
+                );
+                self.scroll_x = data
+            }
             // LYC: LY Compare (R/W)
             0x45 => self.lyc = data,
             // BGP: BG Palette Data (R/W)
