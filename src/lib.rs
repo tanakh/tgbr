@@ -2,6 +2,7 @@
 
 pub mod apu;
 pub mod bus;
+pub mod config;
 pub mod consts;
 pub mod cpu;
 pub mod gameboy;

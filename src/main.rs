@@ -18,6 +18,7 @@ use std::{
 };
 
 use tgbr::{
+    config::Config,
     gameboy::GameBoy,
     interface::{Input, Pad},
     rom::Rom,
@@ -26,6 +27,25 @@ use tgbr::{
 const SCALING: u32 = 4;
 const FPS: f64 = 60.0;
 
+const DMG_PALETTE: [tgbr::interface::Color; 4] = {
+    use tgbr::interface::Color;
+    [
+        // Color::new(155, 188, 15),
+        // Color::new(139, 172, 15),
+        // Color::new(48, 98, 48),
+        // Color::new(15, 56, 15),
+
+        // Color::new(155, 188, 15),
+        // Color::new(136, 170, 10),
+        // Color::new(48, 98, 48),
+        // Color::new(15, 56, 15)
+        Color::new(160, 207, 10),
+        Color::new(140, 191, 10),
+        Color::new(46, 115, 32),
+        Color::new(0, 63, 0),
+    ]
+};
+
 #[argopt::cmd]
 fn main(file: PathBuf) -> Result<()> {
     env_logger::builder().format_timestamp(None).init();
@@ -33,7 +53,9 @@ fn main(file: PathBuf) -> Result<()> {
     let rom = load_rom(&file)?;
     rom.info();
 
-    let mut gb = GameBoy::new(rom, true);
+    let config = Config::default().set_dmg_palette(&DMG_PALETTE);
+
+    let mut gb = GameBoy::new(rom, &config)?;
 
     let (width, height) = {
         let buf = gb.frame_buffer().borrow();
