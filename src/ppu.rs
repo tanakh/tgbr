@@ -9,13 +9,6 @@ use crate::{
     util::{pack, Ref},
 };
 
-const DMG_PALETTE: [Color; 4] = [
-    Color::new(255, 255, 255),
-    Color::new(170, 170, 170),
-    Color::new(85, 85, 85),
-    Color::new(0, 0, 0),
-];
-
 const ATTR_NONE: u8 = 0;
 const ATTR_BG: u8 = 1;
 const ATTR_OBJ: u8 = 2;
@@ -44,10 +37,11 @@ pub struct Ppu {
     bg_palette: [u8; 4],
     obj_palette: [[u8; 4]; 2],
 
-    ly: u8,
     lyc: u8,
+    ly: u8,
     lx: u64,
     frame: u64,
+    window_rendering_counter: u8,
 
     line_buffer: [u8; SCREEN_WIDTH as usize],
     line_buffer_attr: [u8; SCREEN_WIDTH as usize],
@@ -56,6 +50,8 @@ pub struct Ppu {
     vram: Ref<Vec<u8>>,
     oam: Ref<Vec<u8>>,
     interrupt_flag: Ref<u8>,
+
+    dmg_palette: [Color; 4],
 }
 
 impl Ppu {
@@ -64,6 +60,7 @@ impl Ppu {
         oam: &Ref<Vec<u8>>,
         interrupt_flag: &Ref<u8>,
         frame_buffer: &Ref<FrameBuffer>,
+        dmg_palette: &[Color; 4],
     ) -> Self {
         Self {
             ppu_enable: false,
@@ -89,13 +86,19 @@ impl Ppu {
             obj_palette: [[0; 4]; 2],
             lx: 0,
             frame: 0,
+            window_rendering_counter: 0,
             line_buffer: [0; SCREEN_WIDTH as usize],
             line_buffer_attr: [0; SCREEN_WIDTH as usize],
             frame_buffer: Ref::clone(frame_buffer),
             vram: Ref::clone(vram),
             oam: Ref::clone(oam),
             interrupt_flag: Ref::clone(interrupt_flag),
+            dmg_palette: dmg_palette.clone(),
         }
+    }
+
+    pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
+        self.dmg_palette = palette.clone();
     }
 
     pub fn tick(&mut self) {
@@ -136,6 +139,7 @@ impl Ppu {
             if self.ly == LINES_PER_FRAME as u8 {
                 self.ly = 0;
                 self.frame += 1;
+                self.window_rendering_counter = 0;
             }
 
             if self.ly == self.lyc && self.lyc_interrupt_enable {
@@ -282,7 +286,7 @@ impl Ppu {
         let mut fb = self.frame_buffer.borrow_mut();
         for x in 0..SCREEN_WIDTH as usize {
             let c = self.line_buffer[x];
-            fb.set(x, self.ly as _, DMG_PALETTE[(c & 3) as usize])
+            fb.set(x, self.ly as _, self.dmg_palette[(c & 3) as usize])
         }
     }
 
@@ -306,6 +310,7 @@ impl Ppu {
 
         let y = self.ly.wrapping_add(self.scroll_y);
         let is_in_window_y_range = self.ly >= self.window_y;
+        let mut window_rendered = false;
 
         for scr_x in 0..SCREEN_WIDTH as u8 {
             let is_in_window_x_range = scr_x + 7 >= self.window_x;
@@ -314,9 +319,10 @@ impl Ppu {
                 if !(self.window_enable && is_in_window_y_range && is_in_window_x_range) {
                     (scr_x.wrapping_add(self.scroll_x), y, bg_tile_map)
                 } else {
+                    window_rendered = true;
                     (
                         scr_x - self.window_x + 7,
-                        self.ly - self.window_y,
+                        self.window_rendering_counter,
                         window_tile_map,
                     )
                 };
@@ -341,6 +347,10 @@ impl Ppu {
 
             self.line_buffer[scr_x as usize] = self.bg_palette[b as usize];
             self.line_buffer_attr[scr_x as usize] = if b != 0 { ATTR_BG } else { ATTR_NONE };
+        }
+
+        if window_rendered {
+            self.window_rendering_counter += 1;
         }
     }
 
@@ -390,7 +400,7 @@ impl Ppu {
 
             // CGB Mode Only
             // let tile_vram_bank = v[3];
-            // let palette_number = v[0..=3].load();
+            // let palette_number = v[0..=2].load();
 
             let ofs_y = self.ly + 16 - y;
 
