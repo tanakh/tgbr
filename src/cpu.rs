@@ -15,7 +15,6 @@ pub struct Cpu {
     period: u64,
     interrupt_enable: Ref<u8>,
     interrupt_flag: Ref<u8>,
-    prev_interrupt_flag: u8,
     bus: Ref<Bus>,
 }
 
@@ -208,7 +207,6 @@ impl Cpu {
             period: 0,
             interrupt_enable: Ref::clone(interrupt_enable),
             interrupt_flag: Ref::clone(interrupt_flag),
-            prev_interrupt_flag: 0,
             bus: Ref::clone(bus),
         }
     }
@@ -239,31 +237,46 @@ impl Cpu {
     }
 
     fn process_interrupt(&mut self) -> bool {
-        let interrupt_flag = *self.interrupt_flag.borrow();
-        let interrupt_flag_rise = !self.prev_interrupt_flag & interrupt_flag;
-        self.prev_interrupt_flag = interrupt_flag;
-
         if !self.prev_interrupt_enable {
             return false;
         }
-        // let b = interrupt_flag_rise & *self.interrupt_enable.borrow();
-        let b = interrupt_flag & *self.interrupt_enable.borrow();
-        if b == 0 {
+        if *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow() == 0 {
             return false;
         }
-        for i in 0..5 {
-            if b & (1 << i) != 0 {
-                info!("INT {:02X} occured", 0x40 + i * 8);
-                self.interrupt_master_enable = false;
-                *self.interrupt_flag.borrow_mut() &= !(1 << i);
-                self.push_u16(self.reg.pc);
-                self.reg.pc = 0x40 + i * 8;
-                self.tick();
-                self.halting = false;
-                return true;
-            }
+
+        self.interrupt_master_enable = false;
+
+        self.push((self.reg.pc >> 8) as u8);
+        // Dispatch interrupt vector at this timing
+        let addr = self.dispatch_interrupt();
+        self.push(self.reg.pc as u8);
+
+        self.reg.pc = addr;
+        info!(
+            "Interrupt occured: IE:{:02X}, IF:{:02X}, ADDR:{:04X}",
+            *self.interrupt_enable.borrow(),
+            *self.interrupt_flag.borrow(),
+            self.reg.pc
+        );
+
+        self.tick();
+        self.tick();
+        self.tick();
+
+        self.halting = false;
+        true
+    }
+
+    fn dispatch_interrupt(&mut self) -> u16 {
+        let b = *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow();
+        if b == 0 {
+            // IE (=$FFFF) is written in pushing upper byte of PC, dispatching interrupt vector canceled
+            0x0000
+        } else {
+            let pos = b.trailing_zeros();
+            *self.interrupt_flag.borrow_mut() &= !(1 << pos);
+            0x0040 + pos as u16 * 8
         }
-        unreachable!()
     }
 
     fn exec_instr(&mut self) {
@@ -928,10 +941,12 @@ impl Cpu {
             _ => unreachable!(),
         };
 
+        use crate::consts::*;
+
         trace!(
             "{pc:04X}: {bytes:8} | {asm:16} | \
             A:{a:02X} B:{b:02X} C:{c:02X} D:{d:02X} E:{e:02X} H:{h:02X} L:{l:02X} \
-            SP:{sp:04X} F:{zf}{nf}{hf}{cf} IME:{ime} IE:{ie:02X} IF:{inf:02X} CYC:{cyc}",
+            SP:{sp:04X} F:{zf}{nf}{hf}{cf} IME:{ime} IE:{ie:02X} IF:{inf:02X} FRM:{frm} Y:{ly} X:{lx}",
             a = self.reg.a,
             b = self.reg.b,
             c = self.reg.c,
@@ -947,7 +962,9 @@ impl Cpu {
             ime = self.interrupt_master_enable as u8,
             ie = *self.interrupt_enable.borrow(),
             inf = *self.interrupt_flag.borrow(),
-            cyc = self.cycle
+            frm = self.cycle / CPU_CLOCK_PER_LINE / LINES_PER_FRAME,
+            ly = self.cycle / CPU_CLOCK_PER_LINE % LINES_PER_FRAME,
+            lx = self.cycle % CPU_CLOCK_PER_LINE,
         );
     }
 }
