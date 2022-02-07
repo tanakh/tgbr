@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use log::warn;
+use log::{error, trace, warn};
 
 use crate::{
     consts::{
@@ -8,6 +8,11 @@ use crate::{
     interface::{Color, FrameBuffer},
     util::{pack, Ref},
 };
+
+const MODE_HBLANK: u8 = 0;
+const MODE_VBLANK: u8 = 1;
+const MODE_OAM_SEARCH: u8 = 2;
+const MODE_TRANSFER: u8 = 3;
 
 const ATTR_NONE: u8 = 0;
 const ATTR_BG: u8 = 1;
@@ -28,6 +33,7 @@ pub struct Ppu {
     vblank_interrupt_enable: bool,
     hblank_interrupt_enable: bool,
     mode: u8,
+    prev_lcd_interrupt: bool,
 
     scroll_y: u8,
     scroll_x: u8,
@@ -76,6 +82,7 @@ impl Ppu {
             vblank_interrupt_enable: false,
             hblank_interrupt_enable: false,
             mode: 0,
+            prev_lcd_interrupt: false,
             scroll_y: 0,
             scroll_x: 0,
             ly: 0,
@@ -106,31 +113,20 @@ impl Ppu {
             if self.lx == 0 {
                 self.render_line();
             }
-
             if self.lx < 80 {
-                if self.mode != 2 && self.oam_interrupt_enable {
-                    *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
-                }
-                self.mode = 2;
-            } else if self.lx < 80 + 172 {
-                // FIXME: mode 3 extends at most 289 dots
-                if self.mode != 3 && self.hblank_interrupt_enable {
-                    *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
-                }
-                self.mode = 3;
+                self.set_mode(MODE_OAM_SEARCH);
             } else {
-                self.mode = 0;
+                // FIXME: Calculate accurate timing
+                let transfer_period = 172 + self.scroll_x as u64 % 8 + 3;
+
+                if self.lx < 80 + transfer_period {
+                    self.set_mode(MODE_TRANSFER);
+                } else {
+                    self.set_mode(MODE_HBLANK);
+                }
             }
         } else {
-            if self.mode != 1 {
-                // Enter VBlank
-                *self.interrupt_flag.borrow_mut() |= INT_VBLANK;
-                // OAM interrupt also triggered at the beginning of line 144
-                if self.vblank_interrupt_enable || self.oam_interrupt_enable {
-                    *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
-                }
-            }
-            self.mode = 1;
+            self.set_mode(MODE_VBLANK);
         }
 
         self.lx += 1;
@@ -143,11 +139,32 @@ impl Ppu {
                 self.frame += 1;
                 self.window_rendering_counter = 0;
             }
+        }
 
-            if self.ly == self.lyc && self.lyc_interrupt_enable {
-                *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
+        self.update_lcd_interrupt();
+    }
+
+    fn set_mode(&mut self, mode: u8) {
+        if self.mode != mode {
+            if mode == MODE_VBLANK {
+                *self.interrupt_flag.borrow_mut() |= INT_VBLANK;
             }
         }
+        self.mode = mode;
+    }
+
+    fn update_lcd_interrupt(&mut self) {
+        let cur_lcd_interrupt = match self.mode {
+            MODE_HBLANK => self.hblank_interrupt_enable,
+            MODE_VBLANK => self.vblank_interrupt_enable || self.oam_interrupt_enable,
+            MODE_OAM_SEARCH => self.oam_interrupt_enable,
+            _ => false,
+        } || (self.lyc_interrupt_enable && self.ly == self.lyc);
+
+        if !self.prev_lcd_interrupt && cur_lcd_interrupt {
+            *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
+        }
+        self.prev_lcd_interrupt = cur_lcd_interrupt;
     }
 
     pub fn frame(&self) -> u64 {
@@ -155,7 +172,7 @@ impl Ppu {
     }
 
     pub fn read(&mut self, addr: u16) -> u8 {
-        match addr & 0xff {
+        let data = match addr & 0xff {
             // LCDC: LCD Control (R/W)
             0x40 => pack! {
                 7 => self.ppu_enable,
@@ -206,19 +223,21 @@ impl Ppu {
             0x4a => self.window_y,
             // WX: Window X Position (R/W)
             0x4b => self.window_x,
-            _ => {
-                todo!("Read from LCD I/O: ${addr:04X}");
-                // warn!("Unusable read from I/O: ${addr:04X}");
-                // 0
-            }
-        }
+            _ => todo!("Read from LCD I/O: ${addr:04X}"),
+        };
+        // trace!("PPU Read: ${addr:04X} = ${data:02X}");
+        data
     }
 
     pub fn write(&mut self, addr: u16, data: u8) {
+        trace!("PPU Write: ${addr:04X} = ${data:02X}");
         match addr & 0xff {
             // LCDC: LCD Control (R/W)
             0x40 => {
                 let v = data.view_bits::<Lsb0>();
+                if self.ppu_enable && !v[7] {
+                    error!("Disabling the display outside of the VBlank period");
+                }
                 self.ppu_enable = v[7];
                 self.window_tile_map_select = v[6];
                 self.window_enable = v[5];
