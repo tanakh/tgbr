@@ -112,6 +112,24 @@ impl Ppu {
     }
 
     pub fn tick(&mut self) {
+        self.lx += 1;
+        if self.lx == DOTS_PER_LINE {
+            self.lx = 0;
+
+            self.ly += 1;
+            if self.ly == LINES_PER_FRAME as u8 {
+                self.ly = 0;
+                self.frame += 1;
+                self.window_rendering_counter = 0;
+            }
+        }
+
+        if !self.ppu_enable {
+            self.mode = MODE_HBLANK;
+            self.prev_lcd_interrupt = false;
+            return;
+        }
+
         if VISIBLE_RANGE.contains(&(self.ly as u64)) {
             if self.lx == 0 {
                 self.render_line();
@@ -132,18 +150,6 @@ impl Ppu {
             self.set_mode(MODE_VBLANK);
         }
 
-        self.lx += 1;
-        if self.lx == DOTS_PER_LINE {
-            self.lx = 0;
-
-            self.ly += 1;
-            if self.ly == LINES_PER_FRAME as u8 {
-                self.ly = 0;
-                self.frame += 1;
-                self.window_rendering_counter = 0;
-            }
-        }
-
         self.update_lcd_interrupt();
     }
 
@@ -152,7 +158,6 @@ impl Ppu {
             if mode == MODE_VBLANK {
                 *self.interrupt_flag.borrow_mut() |= INT_VBLANK;
             }
-
             *self.oam_lock.borrow_mut() = matches!(mode, MODE_OAM_SEARCH | MODE_TRANSFER);
         }
         self.mode = mode;
@@ -240,7 +245,7 @@ impl Ppu {
             // LCDC: LCD Control (R/W)
             0x40 => {
                 let v = data.view_bits::<Lsb0>();
-                if self.ppu_enable && !v[7] {
+                if self.ppu_enable && !v[7] && self.mode != MODE_VBLANK {
                     error!("Disabling the display outside of the VBlank period");
                 }
                 self.ppu_enable = v[7];

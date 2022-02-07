@@ -11,7 +11,7 @@ use sdl2::{
 };
 use std::{
     collections::VecDeque,
-    fs::File,
+    fs::{self, File},
     io,
     path::{Path, PathBuf},
     time::Duration,
@@ -47,13 +47,27 @@ const DMG_PALETTE: [tgbr::interface::Color; 4] = {
 };
 
 #[argopt::cmd]
-fn main(file: PathBuf) -> Result<()> {
+fn main(
+    /// Path to Boot ROM
+    #[opt(long)]
+    boot_rom: Option<PathBuf>,
+    /// Path to Cartridge ROM
+    file: PathBuf,
+) -> Result<()> {
     env_logger::builder().format_timestamp(None).init();
 
     let rom = load_rom(&file)?;
     rom.info();
 
-    let config = Config::default().set_dmg_palette(&DMG_PALETTE);
+    let boot_rom = if let Some(boot_rom) = boot_rom {
+        Some(fs::read(boot_rom)?)
+    } else {
+        None
+    };
+
+    let config = Config::default()
+        .set_dmg_palette(&DMG_PALETTE)
+        .set_boot_rom(boot_rom);
 
     let mut gb = GameBoy::new(rom, &config)?;
 

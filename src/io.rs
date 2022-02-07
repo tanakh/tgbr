@@ -136,9 +136,7 @@ impl Io {
             // SC: Serial transfer control (R/W)
             0x02 => {
                 warn!("Read from SC");
-                pack! {
-                    1..=6 => !0,
-                }
+                pack!(1..=6 => !0)
             }
             // DIV: Divider register (R/W)
             0x04 => self.divider,

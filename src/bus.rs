@@ -8,6 +8,8 @@ pub struct Bus {
     oam: Ref<Vec<u8>>,
     oam_lock: Ref<bool>,
     hiram: [u8; 0x7F],
+    boot_rom: [u8; 0x100],
+    map_boot_rom: bool,
     mbc: Ref<dyn Mbc>,
     io: Ref<Io>,
     dma: Dma,
@@ -28,6 +30,7 @@ impl Bus {
         vram: &Ref<Vec<u8>>,
         oam: &Ref<Vec<u8>>,
         oam_lock: &Ref<bool>,
+        boot_rom: &Option<Vec<u8>>,
         io: &Ref<Io>,
     ) -> Self {
         Self {
@@ -36,6 +39,10 @@ impl Bus {
             oam: Ref::clone(oam),
             oam_lock: Ref::clone(oam_lock),
             hiram: [0; 0x7F],
+            boot_rom: boot_rom
+                .as_ref()
+                .map_or_else(|| [0; 0x100], |r| r.as_slice().try_into().unwrap()),
+            map_boot_rom: boot_rom.is_some(),
             mbc: Ref::clone(mbc),
             io: Ref::clone(io),
             dma: Dma::default(),
@@ -44,7 +51,14 @@ impl Bus {
 
     pub fn read(&mut self, addr: u16) -> u8 {
         let data = match addr {
-            0x0000..=0x7fff => self.mbc.borrow_mut().read(addr),
+            0x0000..=0x00FF => {
+                if self.map_boot_rom {
+                    self.boot_rom[addr as usize]
+                } else {
+                    self.mbc.borrow_mut().read(addr)
+                }
+            }
+            0x0100..=0x7fff => self.mbc.borrow_mut().read(addr),
             0x8000..=0x9fff => self.vram.borrow()[(addr & 0x1fff) as usize],
             0xa000..=0xbfff => self.mbc.borrow_mut().read(addr),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize],
@@ -85,36 +99,26 @@ impl Bus {
                     self.oam.borrow_mut()[(addr & 0xff) as usize] = data
                 }
             }
-
             0xfea0..=0xfeff => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
-            0xff00..=0xff7f => {
-                if addr == 0xff46 {
-                    // DMA
-                    self.dma.source = data;
-                    self.dma.pos = 0;
-                    self.dma.enabled = true;
-                } else {
-                    self.io.borrow_mut().write(addr, data);
-                }
+
+            0xff46 => {
+                // DMA
+                self.dma.source = data;
+                self.dma.pos = 0;
+                self.dma.enabled = true;
             }
+            0xff50 => self.map_boot_rom = data == 0, // BANK
+            0xff00..=0xff7f => self.io.borrow_mut().write(addr, data),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize] = data,
             0xffff => self.io.borrow_mut().write(addr, data),
         };
     }
 
     pub fn read_immutable(&mut self, addr: u16) -> Option<u8> {
-        let data = match addr {
-            0x0000..=0x7fff => self.mbc.borrow_mut().read(addr),
-            0x8000..=0x9fff => self.vram.borrow()[(addr & 0x1fff) as usize],
-            0xa000..=0xbfff => self.mbc.borrow_mut().read(addr),
-            0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize],
-            0xfe00..=0xfe9f => self.oam.borrow()[(addr & 0xff) as usize],
-            0xfea0..=0xfeff => todo!("Read from Unusable address: ${addr:04x}"),
-            0xff00..=0xff7f => return None,
-            0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize],
-            0xffff => return None,
-        };
-        Some(data)
+        match addr {
+            0xff00..=0xff7f | 0xffff => None,
+            _ => Some(self.read(addr)),
+        }
     }
 
     pub fn tick(&mut self) {

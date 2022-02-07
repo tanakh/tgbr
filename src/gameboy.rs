@@ -18,8 +18,9 @@ pub struct GameBoy {
     cpu: Cpu,
     io: Ref<Io>,
     ppu: Ref<Ppu>,
-    apu: Ref<Apu>,
-    rom: Ref<Rom>,
+    _apu: Ref<Apu>,
+    _rom: Ref<Rom>,
+    model: Model,
     frame_buffer: Ref<FrameBuffer>,
     audio_buffer: Ref<AudioBuffer>,
 }
@@ -53,9 +54,17 @@ impl GameBoy {
 
         let io = Ref::new(Io::new(&ppu, &apu, &interrupt_enable, &interrupt_flag));
 
-        let bus = Ref::new(Bus::new(&mbc, &vram, &oam, &oam_lock, &io));
-        let mut cpu = Cpu::new(&bus, &interrupt_enable, &interrupt_flag);
+        let bus = Ref::new(Bus::new(
+            &mbc,
+            &vram,
+            &oam,
+            &oam_lock,
+            &config.boot_rom,
+            &io,
+        ));
+        let cpu = Cpu::new(&bus, &interrupt_enable, &interrupt_flag);
 
+        // Set up the contents of registers after internal ROM execution
         let model = match rom.borrow().cgb_flag {
             CgbFlag::NonCgb => {
                 if config.model == Model::Auto {
@@ -80,11 +89,30 @@ impl GameBoy {
             }
         };
 
-        // Set up the contents of registers after internal ROM execution
-        let reg = cpu.register();
+        let mut ret = Self {
+            cpu,
+            io,
+            ppu,
+            _apu: apu,
+            _rom: rom,
+            model,
+            frame_buffer,
+            audio_buffer,
+        };
 
-        match model {
+        if !config.boot_rom.is_some() {
+            // Do not use boot ROM
+            // Set the values of the state after the boot ROM
+            ret.setup_initial_state();
+        }
+
+        Ok(ret)
+    }
+
+    fn setup_initial_state(&mut self) {
+        match self.model {
             Model::Dmg => {
+                let reg = self.cpu.register();
                 reg.a = 0x01;
                 reg.f.unpack(0xB0);
                 reg.b = 0x00;
@@ -97,6 +125,7 @@ impl GameBoy {
                 reg.pc = 0x0100;
             }
             Model::Cgb => {
+                let reg = self.cpu.register();
                 reg.a = 0x11;
                 reg.f.unpack(0x80);
                 reg.b = 0x00;
@@ -110,16 +139,6 @@ impl GameBoy {
             }
             _ => unreachable!(),
         }
-
-        Ok(Self {
-            cpu,
-            io,
-            ppu,
-            apu,
-            rom,
-            frame_buffer,
-            audio_buffer,
-        })
     }
 
     pub fn exec_frame(&mut self) {
