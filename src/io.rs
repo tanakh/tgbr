@@ -217,7 +217,7 @@ impl Io {
             0xff => {
                 trace!("IE = {data:02X}");
                 *self.interrupt_enable.borrow_mut() = data
-            },
+            }
 
             // APU Registers
             0x10..=0x3F => self.apu.borrow_mut().write(addr, data),

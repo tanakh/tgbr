@@ -39,10 +39,12 @@ impl GameBoy {
 
         let vram = Ref::new(vec![0; 0x2000]);
         let oam = Ref::new(vec![0; 0xA0]);
+        let oam_lock = Ref::new(false);
 
         let ppu = Ref::new(Ppu::new(
             &vram,
             &oam,
+            &oam_lock,
             &interrupt_flag,
             &frame_buffer,
             &config.dmg_palette,
@@ -51,7 +53,7 @@ impl GameBoy {
 
         let io = Ref::new(Io::new(&ppu, &apu, &interrupt_enable, &interrupt_flag));
 
-        let bus = Ref::new(Bus::new(&mbc, &vram, &oam, &io));
+        let bus = Ref::new(Bus::new(&mbc, &vram, &oam, &oam_lock, &io));
         let mut cpu = Cpu::new(&bus, &interrupt_enable, &interrupt_flag);
 
         let model = match rom.borrow().cgb_flag {

@@ -6,6 +6,7 @@ pub struct Bus {
     ram: [u8; 0x2000],
     vram: Ref<Vec<u8>>,
     oam: Ref<Vec<u8>>,
+    oam_lock: Ref<bool>,
     hiram: [u8; 0x7F],
     mbc: Ref<dyn Mbc>,
     io: Ref<Io>,
@@ -22,11 +23,18 @@ struct Dma {
 }
 
 impl Bus {
-    pub fn new(mbc: &Ref<dyn Mbc>, vram: &Ref<Vec<u8>>, oam: &Ref<Vec<u8>>, io: &Ref<Io>) -> Self {
+    pub fn new(
+        mbc: &Ref<dyn Mbc>,
+        vram: &Ref<Vec<u8>>,
+        oam: &Ref<Vec<u8>>,
+        oam_lock: &Ref<bool>,
+        io: &Ref<Io>,
+    ) -> Self {
         Self {
             ram: [0; 0x2000],
             vram: Ref::clone(vram),
             oam: Ref::clone(oam),
+            oam_lock: Ref::clone(oam_lock),
             hiram: [0; 0x7F],
             mbc: Ref::clone(mbc),
             io: Ref::clone(io),
@@ -40,7 +48,13 @@ impl Bus {
             0x8000..=0x9fff => self.vram.borrow()[(addr & 0x1fff) as usize],
             0xa000..=0xbfff => self.mbc.borrow_mut().read(addr),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize],
-            0xfe00..=0xfe9f => self.oam.borrow()[(addr & 0xff) as usize],
+            0xfe00..=0xfe9f => {
+                if !*self.oam_lock.borrow() {
+                    self.oam.borrow_mut()[(addr & 0xff) as usize]
+                } else {
+                    0xff
+                }
+            }
             0xfea0..=0xfeff => todo!("Read from Unusable address: ${addr:04x}"),
             0xff00..=0xff7f => {
                 if addr == 0xff46 {
@@ -66,7 +80,12 @@ impl Bus {
             0x8000..=0x9fff => self.vram.borrow_mut()[(addr & 0x1fff) as usize] = data,
             0xa000..=0xbfff => self.mbc.borrow_mut().write(addr, data),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize] = data,
-            0xfe00..=0xfe9f => self.oam.borrow_mut()[(addr & 0xff) as usize] = data,
+            0xfe00..=0xfe9f => {
+                if !*self.oam_lock.borrow() {
+                    self.oam.borrow_mut()[(addr & 0xff) as usize] = data
+                }
+            }
+
             0xfea0..=0xfeff => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
             0xff00..=0xff7f => {
                 if addr == 0xff46 {

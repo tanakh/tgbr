@@ -55,6 +55,7 @@ pub struct Ppu {
 
     vram: Ref<Vec<u8>>,
     oam: Ref<Vec<u8>>,
+    oam_lock: Ref<bool>,
     interrupt_flag: Ref<u8>,
 
     dmg_palette: [Color; 4],
@@ -64,6 +65,7 @@ impl Ppu {
     pub fn new(
         vram: &Ref<Vec<u8>>,
         oam: &Ref<Vec<u8>>,
+        oam_lock: &Ref<bool>,
         interrupt_flag: &Ref<u8>,
         frame_buffer: &Ref<FrameBuffer>,
         dmg_palette: &[Color; 4],
@@ -99,6 +101,7 @@ impl Ppu {
             frame_buffer: Ref::clone(frame_buffer),
             vram: Ref::clone(vram),
             oam: Ref::clone(oam),
+            oam_lock: Ref::clone(oam_lock),
             interrupt_flag: Ref::clone(interrupt_flag),
             dmg_palette: dmg_palette.clone(),
         }
@@ -149,6 +152,8 @@ impl Ppu {
             if mode == MODE_VBLANK {
                 *self.interrupt_flag.borrow_mut() |= INT_VBLANK;
             }
+
+            *self.oam_lock.borrow_mut() = matches!(mode, MODE_OAM_SEARCH | MODE_TRANSFER);
         }
         self.mode = mode;
     }
