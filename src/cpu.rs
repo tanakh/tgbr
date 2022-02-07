@@ -244,6 +244,7 @@ impl Cpu {
             return false;
         }
 
+        let prev_if = *self.interrupt_flag.borrow();
         self.interrupt_master_enable = false;
 
         self.push((self.reg.pc >> 8) as u8);
@@ -253,8 +254,9 @@ impl Cpu {
 
         self.reg.pc = addr;
         info!(
-            "Interrupt occured: IE:{:02X}, IF:{:02X}, ADDR:{:04X}",
+            "Interrupt occured: IE:{:02X}, IF:{:02X}->{:02X}, ADDR:{:04X}",
             *self.interrupt_enable.borrow(),
+            prev_if,
             *self.interrupt_flag.borrow(),
             self.reg.pc
         );
@@ -944,9 +946,9 @@ impl Cpu {
         use crate::consts::*;
 
         trace!(
-            "{pc:04X}: {bytes:8} | {asm:16} | \
+            "{pc:04X}: {bytes:8} | {asm:20} | \
             A:{a:02X} B:{b:02X} C:{c:02X} D:{d:02X} E:{e:02X} H:{h:02X} L:{l:02X} \
-            SP:{sp:04X} F:{zf}{nf}{hf}{cf} IME:{ime} IE:{ie:02X} IF:{inf:02X} FRM:{frm} Y:{ly} X:{lx}",
+            SP:{sp:04X} F:{zf}{nf}{hf}{cf} IME:{ime} IE:{ie:02X} IF:{inf:02X} CYC:{frm}:{ly:03}:{lx:03}",
             a = self.reg.a,
             b = self.reg.b,
             c = self.reg.c,
@@ -969,6 +971,38 @@ impl Cpu {
     }
 }
 
+#[rustfmt::skip]
+const HWREG_NAME: &[(u16, &str)] = &[
+    (0xFF00, "P1"), (0xFF01, "SB"), (0xFF02, "SC"),
+    (0xFF04, "DIV"), (0xFF05, "TIMA"), (0xFF06, "TMA"), (0xFF07, "TAC"), (0xFF0F, "IF"),
+
+    (0xFF10, "NR10"), (0xFF11, "NR11"), (0xFF12, "NR12"), (0xFF13, "NR13"), (0xFF14, "NR14"),
+    (0xFF16, "NR21"), (0xFF17, "NR22"), (0xFF18, "NR23"), (0xFF19, "NR24"),
+    (0xFF1A, "NR30"), (0xFF1B, "NR31"), (0xFF1C, "NR32"), (0xFF1D, "NR33"), (0xFF1E, "NR34"),
+    (0xFF20, "NR41"), (0xFF21, "NR42"), (0xFF22, "NR43"), (0xFF23, "NR44"),
+    (0xFF24, "NR50"), (0xFF25, "NR51"), (0xFF26, "NR52"),
+
+    (0xFF40, "LCDC"), (0xFF41, "STAT"), (0xFF42, "SCY"), (0xFF43, "SCX"),
+    (0xFF44, "LY"), (0xFF45, "LYC"), (0xFF46, "DMA"), (0xFF47, "BGP"),
+    (0xFF48, "OBP0"), (0xFF49, "OBP1"), (0xFF4A, "WY"), (0xFF4B, "WX"), 
+
+    (0xFF4D, "KEY1"), (0xFF4F, "VBK"), (0xFF50, "BOOT"),
+    (0xFF51, "HDMA1"), (0xFF52, "HDMA2"), (0xFF53, "HDMA3"), (0xFF54, "HDMA4"), (0xFF55, "HDMA5"),
+    (0xFF56, "RP"),
+    
+    (0xFF68, "BCPS"), (0xFF69, "BCPD"), (0xFF6A, "OCPS"), (0xFF6B, "OCPD"),
+    (0xFF70, "SVBK"), (0xFF76, "PCM12"), (0xFF77, "PCM34"),
+    
+    (0xFFFF, "IE"),
+];
+
+fn hwreg_name(addr: u8) -> Option<&'static str> {
+    HWREG_NAME
+        .iter()
+        .find(|r| addr as u16 | 0xFF00 == r.0)
+        .map(|r| r.1)
+}
+
 fn disasm(pc: u16, opc: u8, opr1: Option<u8>, opr2: Option<u8>) -> (String, usize) {
     let opc = opc;
     let opr1 = opr1;
@@ -985,32 +1019,41 @@ fn disasm(pc: u16, opc: u8, opr1: Option<u8>, opr2: Option<u8>) -> (String, usiz
 
         (SPn) => {{
             bytes += 1;
-            opr1.map_or("SP+??".to_string(), |opr| format!("SP{:+}", opr as i8))
+            opr1.map_or_else(|| "SP+??".to_string(), |opr| format!("SP{:+}", opr as i8))
         }};
 
         (n) => {{
             bytes += 1;
-            opr1.map_or("$??".to_string(), |opr| format!("${:02X}", opr as i8))
+            opr1.map_or_else(|| "$??".to_string(), |opr| format!("${opr:02X}"))
         }};
         ((n)) => {{
             bytes += 1;
-            opr1.map_or("($??)".to_string(), |opr| format!("(${:02X})", opr as i8))
+            opr1.map_or_else(
+                || "($??)".to_string(),
+                |opr| {
+                    hwreg_name(opr).map_or_else(
+                        || format!("(${opr:02X})"),
+                        |name| format!("(<{name}=${opr:02X})"),
+                    )
+                },
+            )
         }};
         (r8) => {{
             bytes += 1;
-            opr1.map_or("$????".to_string(), |opr| {
-                format!("${:04X}", pc.wrapping_add(2).wrapping_add(opr as i8 as u16))
-            })
+            opr1.map_or_else(
+                || "$????".to_string(),
+                |opr| format!("${:04X}", pc.wrapping_add(2).wrapping_add(opr as i8 as u16)),
+            )
         }};
         (nn) => {{
             bytes += 2;
             opr1.and_then(|opr1| opr2.map(|opr2| format!("${:02X}{:02X}", opr2, opr1)))
-                .unwrap_or("$????".to_string())
+                .unwrap_or_else(|| "$????".to_string())
         }};
         ((nn)) => {{
             bytes += 2;
             opr1.and_then(|opr1| opr2.map(|opr2| format!("(${:02X}{:02X})", opr2, opr1)))
-                .unwrap_or("($????)".to_string())
+                .unwrap_or_else(|| "($????)".to_string())
         }};
 
         ($n:literal) => {
