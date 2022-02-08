@@ -1,0 +1,36 @@
+; this file was created with wlalink by ville helin <ville.helin@iki.fi>.
+; wla symbolic information for "/home/runner/work/mooneye-test-suite/mooneye-test-suite/build/utils/bootrom_dumper.gb".
+
+[information]
+version 2
+
+[labels]
+01:7d01 enable_cartridge_ram
+01:7d06 copy_data
+01:7d12 disable_cartridge_ram
+01:7d16 compare_data
+01:7d23 finish
+01:7d29 finish@check_lcd
+01:7d2f finish@wait_vblank
+01:7d35 finish@disable_lcd
+01:7d39 finish@clear_tilemap
+01:7d43 finish@choose_tilemap
+01:7d50 finish@setup_tilemap
+01:7d68 finish@clear_tiles
+01:7d72 finish@setup_tile
+01:7d7d finish@setup_audio
+01:7d93 finish@enable_lcd
+01:7da9 memcpy
+01:7db2 memset
+01:7dbb tilemap_happyface
+01:7e83 tilemap_sadface
+
+[definitions]
+00000005 _sizeof_enable_cartridge_ram
+0000000c _sizeof_copy_data
+00000004 _sizeof_disable_cartridge_ram
+0000000d _sizeof_compare_data
+00000086 _sizeof_finish
+00000009 _sizeof_memcpy
+00000009 _sizeof_memset
+000000c8 _sizeof_tilemap_happyface
