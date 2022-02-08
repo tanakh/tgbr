@@ -1,6 +1,10 @@
 use log::{trace, warn};
 
-use crate::{io::Io, mbc::Mbc, util::Ref};
+use crate::{
+    io::Io,
+    mbc::Mbc,
+    util::{pack, Ref},
+};
 
 pub struct Bus {
     ram: [u8; 0x2000],
@@ -82,14 +86,9 @@ impl Bus {
                 }
             }
             0xfea0..=0xfeff => todo!("Read from Unusable address: ${addr:04x}"),
-            0xff00..=0xff7f => {
-                if addr == 0xff46 {
-                    // DMA
-                    self.dma.source
-                } else {
-                    self.io.borrow_mut().read(addr)
-                }
-            }
+            0xff46 => self.dma.source,                             // DMA
+            0xff50 => pack!(1..=7 => !0, 0 => !self.map_boot_rom), // BANK
+            0xff00..=0xff7f => self.io.borrow_mut().read(addr),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize],
             0xffff => self.io.borrow_mut().read(addr),
         }
@@ -97,12 +96,6 @@ impl Bus {
 
     pub fn write(&mut self, addr: u16, data: u8) {
         trace!("--> Write: ${addr:04X} = ${data:02X}");
-        if self.dma.enabled {
-            if matches!(addr, 0xff80..=0xfffe) {
-                self.hiram[(addr & 0x7f) as usize] = data;
-            }
-            return;
-        }
         match addr {
             0x0000..=0x7fff => self.mbc.borrow_mut().write(addr, data),
             0x8000..=0x9fff => self.vram.borrow_mut()[(addr & 0x1fff) as usize] = data,
@@ -122,7 +115,7 @@ impl Bus {
                 self.dma.enabled = false;
                 self.dma.delay = 2;
             }
-            0xff50 => self.map_boot_rom = data == 0, // BANK
+            0xff50 => self.map_boot_rom = data & 1 == 0, // BANK
             0xff00..=0xff7f => self.io.borrow_mut().write(addr, data),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize] = data,
             0xffff => self.io.borrow_mut().write(addr, data),
