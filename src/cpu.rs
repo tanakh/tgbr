@@ -486,8 +486,8 @@ impl Cpu {
 
             (PUSH $opr:tt) => {{
                 let data = load!($opr);
-                self.push_u16(data);
                 self.tick();
+                self.push_u16(data);
             }};
             (POP $opr:tt) => {{
                 let data = self.pop_u16();
@@ -666,6 +666,7 @@ impl Cpu {
                 info!("STOP");
             }};
             (DI) => {{
+                self.prev_interrupt_enable = false;
                 self.interrupt_master_enable = false;
             }};
             (EI) => {{
@@ -794,27 +795,27 @@ impl Cpu {
             }};
             (CALL $opr:tt) => {{
                 let addr = load!($opr);
+                self.tick();
                 self.push_u16(self.reg.pc);
                 self.reg.pc = addr;
-                self.tick();
             }};
             (CALL $cc:tt, $opr:tt) => {{
                 let addr = load!($opr);
                 if cond!($cc) {
+                    self.tick();
                     self.push_u16(self.reg.pc);
                     self.reg.pc = addr;
-                    self.tick();
                 }
             }};
             (RST $opr:expr) => {{
+                self.tick();
                 self.push_u16(self.reg.pc);
                 self.reg.pc = $opr;
-                self.tick();
             }};
 
             (RET) => {{
-                self.tick();
                 self.reg.pc = self.pop_u16();
+                self.tick();
             }};
             (RET $cc:tt) => {{
                 self.tick();
