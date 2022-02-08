@@ -218,26 +218,33 @@ impl Cpu {
     pub fn step(&mut self) {
         self.period += 1;
         while self.cycle < self.period {
-            if self.process_interrupt() {
+            if self.halting {
+                // FIXME: halt bug?
+                if *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow() != 0 {
+                    self.halting = false;
+                    info!("WAKE UP");
+                }
+                self.tick();
+                self.prev_interrupt_enable = self.interrupt_master_enable;
                 continue;
             }
-            if self.halting {
-                let b = *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow();
-                if b == 0 {
-                    self.tick();
-                    continue;
-                }
-                self.halting = false;
-                info!("WAKE UP");
-                // FIXME: halt bug?
+            let pc = self.reg.pc;
+            let opc = self.fetch();
+            if self.process_interrupt(pc) {
+                continue;
             }
-            self.prev_interrupt_enable = self.interrupt_master_enable;
-            self.exec_instr();
+            if log_enabled!(Level::Trace) {
+                self.trace(pc, opc);
+            }
+            self.exec_instr(opc);
         }
     }
 
-    fn process_interrupt(&mut self) -> bool {
-        if !self.prev_interrupt_enable {
+    fn process_interrupt(&mut self, ret_addr: u16) -> bool {
+        let prev_interrupt_enable = self.prev_interrupt_enable;
+        self.prev_interrupt_enable = self.interrupt_master_enable;
+
+        if !prev_interrupt_enable {
             return false;
         }
         if *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow() == 0 {
@@ -247,10 +254,10 @@ impl Cpu {
         let prev_if = *self.interrupt_flag.borrow();
         self.interrupt_master_enable = false;
 
-        self.push((self.reg.pc >> 8) as u8);
+        self.push((ret_addr >> 8) as u8);
         // Dispatch interrupt vector at this timing
         let addr = self.dispatch_interrupt();
-        self.push(self.reg.pc as u8);
+        self.push((ret_addr & 0xff) as u8);
 
         self.reg.pc = addr;
         info!(
@@ -264,8 +271,6 @@ impl Cpu {
         self.tick();
         self.tick();
         self.tick();
-
-        self.halting = false;
         true
     }
 
@@ -281,14 +286,7 @@ impl Cpu {
         }
     }
 
-    fn exec_instr(&mut self) {
-        let pc = self.reg.pc;
-        let opc = self.fetch();
-
-        if log_enabled!(Level::Trace) {
-            self.trace(pc, opc);
-        }
-
+    fn exec_instr(&mut self, opc: u8) {
         macro_rules! load {
             (n) => {
                 self.fetch()

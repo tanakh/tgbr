@@ -1,10 +1,6 @@
 use log::{trace, warn};
 
-use crate::{
-    io::Io,
-    mbc::Mbc,
-    util::{pack, Ref},
-};
+use crate::{io::Io, mbc::Mbc, util::Ref};
 
 pub struct Bus {
     ram: [u8; 0x2000],
@@ -86,8 +82,8 @@ impl Bus {
                 }
             }
             0xfea0..=0xfeff => todo!("Read from Unusable address: ${addr:04x}"),
-            0xff46 => self.dma.source,                             // DMA
-            0xff50 => pack!(1..=7 => !0, 0 => !self.map_boot_rom), // BANK
+            0xff46 => self.dma.source, // DMA
+            0xff50 => !0,              // BANK
             0xff00..=0xff7f => self.io.borrow_mut().read(addr),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize],
             0xffff => self.io.borrow_mut().read(addr),

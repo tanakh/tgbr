@@ -11,4 +11,5 @@ pub mod io;
 pub mod mbc;
 pub mod ppu;
 pub mod rom;
+pub mod serial;
 pub mod util;

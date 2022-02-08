@@ -138,7 +138,7 @@ impl Ppu {
                 self.set_mode(MODE_OAM_SEARCH);
             } else {
                 // FIXME: Calculate accurate timing
-                let transfer_period = 172 + self.scroll_x as u64 % 8 + 3;
+                let transfer_period = 172 + self.scroll_x as u64 % 8;
 
                 if self.lx < 80 + transfer_period {
                     self.set_mode(MODE_TRANSFER);
@@ -155,6 +155,15 @@ impl Ppu {
 
     fn set_mode(&mut self, mode: u8) {
         if self.mode != mode {
+            // trace!(
+            //     "PPU mode changed: {} -> {}, CYC:{}:{}:{}",
+            //     self.mode,
+            //     mode,
+            //     self.frame,
+            //     self.ly,
+            //     self.lx
+            // );
+
             if mode == MODE_VBLANK {
                 *self.interrupt_flag.borrow_mut() |= INT_VBLANK;
             }
@@ -166,7 +175,12 @@ impl Ppu {
     fn update_lcd_interrupt(&mut self) {
         let cur_lcd_interrupt = match self.mode {
             MODE_HBLANK => self.hblank_interrupt_enable,
-            MODE_VBLANK => self.vblank_interrupt_enable || self.oam_interrupt_enable,
+            MODE_VBLANK => {
+                self.vblank_interrupt_enable
+                    || (self.ly as u64 == VISIBLE_RANGE.end
+                        && self.lx < 80
+                        && self.oam_interrupt_enable)
+            }
             MODE_OAM_SEARCH => self.oam_interrupt_enable,
             _ => false,
         } || (self.lyc_interrupt_enable && self.ly == self.lyc);

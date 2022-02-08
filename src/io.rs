@@ -1,35 +1,35 @@
 use bitvec::prelude::*;
-use log::{info, trace, warn};
+use log::{trace, warn};
 
 use crate::{
     apu::Apu,
     consts::{INT_JOYPAD, INT_TIMER},
-    interface::Input,
+    interface::{Input, LinkCable},
     ppu::Ppu,
-    util::{pack, ClockDivider, Ref},
+    serial::SerialTransfer,
+    util::{pack, Ref},
 };
 
 pub struct Io {
     select_action_buttons: bool,
     select_direction_buttons: bool,
-    divider: u8,
+
+    divider: u16,
     timer_counter: u8,
     timer_modulo: u8,
     timer_enable: bool,
     input_clock_select: u8,
+    prev_timer_clock: bool,
+    timer_reload: bool,
+    timer_reloaded: bool,
     interrupt_flag: Ref<u8>,
     interrupt_enable: Ref<u8>,
 
-    divider_counter: ClockDivider,
-    timer_divider_counter: u16,
-
     ppu: Ref<Ppu>,
     apu: Ref<Apu>,
-
+    serial: SerialTransfer,
     input: Input,
 }
-
-const TIMER_DIVIDER_BITS: [u8; 4] = [8, 2, 4, 6];
 
 impl Io {
     pub fn new(
@@ -46,12 +46,14 @@ impl Io {
             timer_modulo: 0,
             timer_enable: false,
             input_clock_select: 0,
+            prev_timer_clock: false,
+            timer_reload: false,
+            timer_reloaded: false,
             interrupt_enable: Ref::clone(interrupt_enable),
             interrupt_flag: Ref::clone(interrupt_flag),
-            divider_counter: ClockDivider::with_period(64),
-            timer_divider_counter: 0,
             ppu: Ref::clone(ppu),
             apu: Ref::clone(apu),
+            serial: SerialTransfer::new(interrupt_flag),
             input: Input::default(),
         }
     }
@@ -61,26 +63,35 @@ impl Io {
             self.ppu.borrow_mut().tick();
             self.apu.borrow_mut().tick();
         }
+        self.serial.tick();
 
-        if self.divider_counter.tick() {
-            self.divider = self.divider.wrapping_add(1);
+        self.divider = self.divider.wrapping_add(4);
+
+        self.timer_reloaded = false;
+
+        if self.timer_reload {
+            log::trace!("Timer reload: ${:02X}", self.timer_modulo);
+            self.timer_counter = self.timer_modulo;
+            *self.interrupt_flag.borrow_mut() |= INT_TIMER;
+            self.timer_reload = false;
+            self.timer_reloaded = true;
         }
 
-        if self.timer_enable {
-            let prev = self.timer_divider_counter;
-            let new = prev.wrapping_add(1);
-            self.timer_divider_counter = new;
-            let pos = TIMER_DIVIDER_BITS[self.input_clock_select as usize] as usize;
+        const TIMER_DIVIDER_BITS: [u8; 4] = [9, 3, 5, 7];
+        let clock_bit = TIMER_DIVIDER_BITS[self.input_clock_select as usize] as usize;
+        let timer_clock = self.timer_enable && self.divider.view_bits::<Lsb0>()[clock_bit];
 
-            if (prev & !new).view_bits::<Lsb0>()[pos - 1] {
-                let (new_counter, overflow) = self.timer_counter.overflowing_add(1);
-                self.timer_counter = new_counter;
-                if overflow {
-                    self.timer_counter = self.timer_modulo;
-                    *self.interrupt_flag.borrow_mut() |= INT_TIMER;
-                }
+        // Counting on falling edge
+        if self.prev_timer_clock && !timer_clock {
+            let (new_counter, overflow) = self.timer_counter.overflowing_add(1);
+            self.timer_counter = new_counter;
+            if overflow {
+                log::trace!("Timer overflow");
+                self.timer_reload = true;
             }
         }
+
+        self.prev_timer_clock = timer_clock;
     }
 
     pub fn set_input(&mut self, input: &Input) {
@@ -93,6 +104,10 @@ impl Io {
                 *self.interrupt_flag.borrow_mut() |= INT_JOYPAD;
             }
         }
+    }
+
+    pub fn set_link_cable(&mut self, link_cable: Option<Ref<dyn LinkCable>>) {
+        self.serial.set_link_cable(link_cable);
     }
 
     fn keypad_input_lines(&self) -> [bool; 4] {
@@ -129,17 +144,11 @@ impl Io {
                 }
             }
             // SB: Serial transfer data (R/W)
-            0x01 => {
-                warn!("Read from SB");
-                0x00
-            }
+            0x01 => self.serial.read_sb(),
             // SC: Serial transfer control (R/W)
-            0x02 => {
-                warn!("Read from SC");
-                pack!(1..=6 => !0)
-            }
+            0x02 => self.serial.read_sc(),
             // DIV: Divider register (R/W)
-            0x04 => self.divider,
+            0x04 => (self.divider >> 8) as u8,
             // TIMA: Timer counter (R/W)
             0x05 => self.timer_counter,
             // TMA: Timer modulo (R/W)
@@ -187,22 +196,30 @@ impl Io {
                 self.select_action_buttons = v[5];
             }
             // SB: Serial transfer data (R/W)
-            0x01 => {
-                info!("Write to SB: ${data:02X} = {}", data as char);
-            }
+            0x01 => self.serial.write_sb(data),
             // SC: Serial transfer control (R/W)
-            0x02 => {
-                info!("Write to SC: {data:02X}");
-            }
+            0x02 => self.serial.write_sc(data),
             // DIV: Divider register (R/W)
-            0x04 => {
-                self.divider = 0;
-                self.divider_counter.reset();
-            }
+            0x04 => self.divider = 0,
             // TIMA: Timer counter (R/W)
-            0x05 => self.timer_counter = data,
+            0x05 => {
+                // On the reload delay cycle, cancel reloading
+                if self.timer_reload {
+                    self.timer_reload = false;
+                }
+                // On the timer reloaded cycle, ignore writing to TIMA
+                if !self.timer_reloaded {
+                    self.timer_counter = data;
+                }
+            }
             // TMA: Timer modulo (R/W)
-            0x06 => self.timer_modulo = data,
+            0x06 => {
+                self.timer_modulo = data;
+                // On the timer reloaded cycle, this value is loaded into TIMA
+                if self.timer_reloaded {
+                    self.timer_counter = data;
+                }
+            }
             // TAC: Timer control (R/W)
             0x07 => {
                 let v = data.view_bits::<Lsb0>();

@@ -6,7 +6,7 @@ use crate::{
     config::{Config, Model},
     consts::{SCREEN_HEIGHT, SCREEN_WIDTH},
     cpu::Cpu,
-    interface::{AudioBuffer, Color, FrameBuffer, Input},
+    interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable},
     io::Io,
     mbc::create_mbc,
     ppu::Ppu,
@@ -164,5 +164,14 @@ impl GameBoy {
 
     pub fn audio_buffer(&self) -> &Ref<AudioBuffer> {
         &self.audio_buffer
+    }
+
+    pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + 'static>) {
+        // FIXME: How to do this simpler?
+        fn wrap_link_cable(link_cable: impl LinkCable + 'static) -> Ref<dyn LinkCable> {
+            Ref(std::rc::Rc::new(std::cell::RefCell::new(link_cable)))
+        }
+        let link_cable = link_cable.map(wrap_link_cable);
+        self.io.borrow_mut().set_link_cable(link_cable);
     }
 }
