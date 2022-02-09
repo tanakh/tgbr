@@ -18,17 +18,15 @@ use std::{
 };
 
 use tgbr::{
-    config::Config,
-    gameboy::GameBoy,
     interface::{Input, Pad},
-    rom::Rom,
+    Config, GameBoy, Rom,
 };
 
 const SCALING: u32 = 4;
 const FPS: f64 = 60.0;
 
-const DMG_PALETTE: [tgbr::interface::Color; 4] = {
-    use tgbr::interface::Color;
+const DMG_PALETTE: [tgbr::Color; 4] = {
+    use tgbr::Color;
     [
         // Color::new(155, 188, 15),
         // Color::new(139, 172, 15),
@@ -39,10 +37,15 @@ const DMG_PALETTE: [tgbr::interface::Color; 4] = {
         // Color::new(136, 170, 10),
         // Color::new(48, 98, 48),
         // Color::new(15, 56, 15)
-        Color::new(160, 207, 10),
-        Color::new(140, 191, 10),
-        Color::new(46, 115, 32),
-        Color::new(0, 63, 0),
+
+        // Color::new(160, 207, 10),
+        // Color::new(140, 191, 10),
+        // Color::new(46, 115, 32),
+        // Color::new(0, 63, 0),
+        Color::new(200, 200, 168),
+        Color::new(164, 164, 140),
+        Color::new(104, 104, 84),
+        Color::new(40, 40, 20),
     ]
 };
 
@@ -352,7 +355,7 @@ impl Default for KeyConfig {
             ],
             select: vec![
                 Key::Keyboard {
-                    scancode: Scancode::Backspace,
+                    scancode: Scancode::RShift,
                 },
                 Key::GameController {
                     id: 0,
