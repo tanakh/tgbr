@@ -131,9 +131,6 @@ impl Ppu {
         }
 
         if VISIBLE_RANGE.contains(&(self.ly as u64)) {
-            if self.lx == 0 {
-                self.render_line();
-            }
             if self.lx < 80 {
                 self.set_mode(MODE_OAM_SEARCH);
             } else {
@@ -155,17 +152,11 @@ impl Ppu {
 
     fn set_mode(&mut self, mode: u8) {
         if self.mode != mode {
-            // trace!(
-            //     "PPU mode changed: {} -> {}, CYC:{}:{}:{}",
-            //     self.mode,
-            //     mode,
-            //     self.frame,
-            //     self.ly,
-            //     self.lx
-            // );
-
             if mode == MODE_VBLANK {
                 *self.interrupt_flag.borrow_mut() |= INT_VBLANK;
+            }
+            if mode == MODE_TRANSFER {
+                self.render_line();
             }
             *self.oam_lock.borrow_mut() = matches!(mode, MODE_OAM_SEARCH | MODE_TRANSFER);
         }
@@ -281,22 +272,26 @@ impl Ppu {
             }
             // SCY: Scroll Y (R/W)
             0x42 => {
-                log::trace!(
-                    "FRM:{} Y:{:3} X:{:3}: SCY = {data:3}",
-                    self.frame,
-                    self.ly,
-                    self.lx
-                );
+                if self.mode == MODE_TRANSFER {
+                    log::info!(
+                        "SCY changed in mode3: SCY={data:3} FRM:{} Y:{:3} X:{:3}",
+                        self.frame,
+                        self.ly,
+                        self.lx
+                    );
+                }
                 self.scroll_y = data
             }
             // SCX: Scroll X (R/W)
             0x43 => {
-                log::trace!(
-                    "FRM:{} Y:{:3} X:{:3}: SCX = {data:3}",
-                    self.frame,
-                    self.ly,
-                    self.lx
-                );
+                if self.mode == MODE_TRANSFER {
+                    log::info!(
+                        "SCX changed in mode3: SCX={data:3} FRM:{} Y:{:3} X:{:3}",
+                        self.frame,
+                        self.ly,
+                        self.lx
+                    );
+                }
                 self.scroll_x = data
             }
             // LYC: LY Compare (R/W)
@@ -401,9 +396,8 @@ impl Ppu {
                 tile_addr -= 0x1000;
             }
 
-            let tile_data = &vram[tile_addr..tile_addr + 16];
-            let lo = tile_data[ofs_y * 2];
-            let hi = tile_data[ofs_y * 2 + 1];
+            let lo = vram[tile_addr + ofs_y * 2];
+            let hi = vram[tile_addr + ofs_y * 2 + 1];
 
             let b = (lo >> (7 - ofs_x)) & 1 | ((hi >> (7 - ofs_x)) & 1) << 1;
 
