@@ -7,13 +7,12 @@ use crate::{
     util::Ref,
 };
 
-pub fn wrap_ref<T: Mbc + 'static>(v: T) -> Ref<dyn Mbc> {
-    Ref(Rc::new(RefCell::new(v)))
-}
-
 pub trait Mbc {
     fn read(&mut self, addr: u16) -> u8;
     fn write(&mut self, _addr: u16, _data: u8) {}
+    fn backup_ram(&self) -> Option<&[u8]> {
+        None
+    }
 }
 
 struct NullMbc {
@@ -21,11 +20,16 @@ struct NullMbc {
 }
 
 impl NullMbc {
-    fn new(rom: &Ref<Rom>) -> Self {
+    fn new(rom: &Ref<Rom>, _backup_ram: Option<Vec<u8>>) -> Self {
         assert_eq!(
             rom.borrow().rom_size,
             32 * 1024,
             "ROM only cartridge should be 32KiB"
+        );
+        assert_eq!(
+            rom.borrow().ram_size,
+            0,
+            "Currently ROM+RAM cartridge not supported"
         );
 
         Self {
@@ -44,11 +48,15 @@ impl Mbc for NullMbc {
     }
 }
 
-pub fn create_mbc(rom: &Ref<Rom>) -> Ref<dyn Mbc> {
+pub fn create_mbc(rom: &Ref<Rom>, backup_ram: Option<Vec<u8>>) -> Ref<dyn Mbc> {
+    pub fn wrap_ref<T: Mbc + 'static>(v: T) -> Ref<dyn Mbc> {
+        Ref(Rc::new(RefCell::new(v)))
+    }
+
     let cart_type = rom.borrow().cartridge_type.clone();
     match cart_type.mbc {
-        None => wrap_ref(NullMbc::new(rom)),
-        Some(rom::Mbc::Mbc1) => wrap_ref(mbc1::Mbc1::new(rom)),
+        None => wrap_ref(NullMbc::new(rom, backup_ram)),
+        Some(rom::Mbc::Mbc1) => wrap_ref(mbc1::Mbc1::new(rom, backup_ram)),
         Some(mbc) => todo!("{} is currently unsupported", mbc),
     }
 }

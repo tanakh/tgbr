@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use log::{error, trace, warn};
+use log::{debug, error, trace, warn};
 
 use crate::{
     consts::{
@@ -273,11 +273,9 @@ impl Ppu {
             // SCY: Scroll Y (R/W)
             0x42 => {
                 if self.mode == MODE_TRANSFER {
-                    log::info!(
+                    debug!(
                         "SCY changed in mode3: SCY={data:3} FRM:{} Y:{:3} X:{:3}",
-                        self.frame,
-                        self.ly,
-                        self.lx
+                        self.frame, self.ly, self.lx
                     );
                 }
                 self.scroll_y = data
@@ -285,11 +283,9 @@ impl Ppu {
             // SCX: Scroll X (R/W)
             0x43 => {
                 if self.mode == MODE_TRANSFER {
-                    log::info!(
+                    debug!(
                         "SCX changed in mode3: SCX={data:3} FRM:{} Y:{:3} X:{:3}",
-                        self.frame,
-                        self.ly,
-                        self.lx
+                        self.frame, self.ly, self.lx
                     );
                 }
                 self.scroll_x = data

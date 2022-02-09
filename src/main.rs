@@ -55,14 +55,16 @@ fn main(
     #[opt(long)]
     boot_rom: Option<PathBuf>,
     /// Path to Cartridge ROM
-    file: PathBuf,
+    rom_file: PathBuf,
 ) -> Result<()> {
     env_logger::builder().format_timestamp(None).init();
 
-    let rom = load_rom(&file)?;
+    let rom = load_rom(&rom_file)?;
     if log_enabled!(log::Level::Info) {
         print_rom_info(&rom.info());
     }
+
+    let backup_ram = load_backup_ram(&rom_file)?;
 
     let boot_rom = if let Some(boot_rom) = boot_rom {
         Some(fs::read(boot_rom)?)
@@ -74,7 +76,7 @@ fn main(
         .set_dmg_palette(&DMG_PALETTE)
         .set_boot_rom(boot_rom);
 
-    let mut gb = GameBoy::new(rom, &config)?;
+    let mut gb = GameBoy::new(rom, backup_ram, &config)?;
 
     let (width, height) = {
         let buf = gb.frame_buffer().borrow();
@@ -197,6 +199,12 @@ fn main(
         timer.wait_for_frame(FPS * 2.0);
     }
 
+    if let Some(ram) = gb.backup_ram() {
+        save_backup_ram(&rom_file, &ram)?;
+    } else {
+        info!("No backup RAM to save");
+    }
+
     Ok(())
 }
 
@@ -235,16 +243,65 @@ fn load_rom(file: &Path) -> Result<Rom> {
                 );
             }
 
+            info!(
+                "Loading ROM from: `{}`.",
+                file.enclosed_name().unwrap().display()
+            );
             let mut bytes = vec![];
             io::copy(&mut file, &mut bytes)?;
             Rom::from_bytes(&bytes)
         }
         Some("gb" | "gbc") => {
+            info!("Loading ROM from: `{}`.", file.display());
             let bytes = std::fs::read(file)?;
             Rom::from_bytes(&bytes)
         }
         _ => bail!("Unsupported file extension"),
     }
+}
+
+const SAVE_DIR: &str = "./save";
+
+fn load_backup_ram(file: &Path) -> Result<Option<Vec<u8>>> {
+    let sav_file = file
+        .file_stem()
+        .ok_or_else(|| anyhow!("Invalid file name: {}", file.display()))?;
+
+    let save_file_path = Path::new(SAVE_DIR).join(sav_file).with_extension("sav");
+
+    Ok(if save_file_path.is_file() {
+        info!("Loading backup RAM: `{}`", save_file_path.display());
+        Some(std::fs::read(save_file_path)?)
+    } else {
+        None
+    })
+}
+
+fn save_backup_ram(file: &Path, ram: &[u8]) -> Result<()> {
+    let sav_file = file
+        .file_stem()
+        .ok_or_else(|| anyhow!("Invalid file name: {}", file.display()))?;
+
+    let save_dir = Path::new(SAVE_DIR);
+    if !save_dir.exists() {
+        fs::create_dir_all(save_dir)?;
+    } else if !save_dir.is_dir() {
+        bail!("`{}` is not a directory", save_dir.display());
+    }
+
+    let save_file_path = save_dir.join(sav_file).with_extension("sav");
+
+    if !save_file_path.exists() {
+        info!("Creating backup RAM file: `{}`", save_file_path.display());
+    } else {
+        info!(
+            "Overwriting backup RAM file: `{}`",
+            save_file_path.display()
+        );
+    }
+    std::fs::write(save_file_path, ram)?;
+
+    Ok(())
 }
 
 fn print_rom_info(info: &[(&str, String)]) {

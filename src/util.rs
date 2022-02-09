@@ -98,3 +98,7 @@ fn test_pack() {
     };
     assert_eq!(v, 0b01001101);
 }
+
+pub fn to_si_bytesize(x: u64) -> String {
+    bytesize::ByteSize(x).to_string_as(true)
+}

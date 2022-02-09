@@ -8,7 +8,7 @@ use crate::{
     cpu::Cpu,
     interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable},
     io::Io,
-    mbc::create_mbc,
+    mbc::{create_mbc, Mbc},
     ppu::Ppu,
     rom::{CgbFlag, Rom},
     util::Ref,
@@ -19,16 +19,17 @@ pub struct GameBoy {
     io: Ref<Io>,
     ppu: Ref<Ppu>,
     _apu: Ref<Apu>,
-    _rom: Ref<Rom>,
+    rom: Ref<Rom>,
+    mbc: Ref<dyn Mbc>,
     model: Model,
     frame_buffer: Ref<FrameBuffer>,
     audio_buffer: Ref<AudioBuffer>,
 }
 
 impl GameBoy {
-    pub fn new(rom: Rom, config: &Config) -> Result<Self> {
+    pub fn new(rom: Rom, backup_ram: Option<Vec<u8>>, config: &Config) -> Result<Self> {
         let rom = Ref::new(rom);
-        let mbc = create_mbc(&rom);
+        let mbc = create_mbc(&rom, backup_ram);
         let frame_buffer = Ref::new(FrameBuffer::new(
             SCREEN_WIDTH as usize,
             SCREEN_HEIGHT as usize,
@@ -94,7 +95,8 @@ impl GameBoy {
             io,
             ppu,
             _apu: apu,
-            _rom: rom,
+            rom,
+            mbc,
             model,
             frame_buffer,
             audio_buffer,
@@ -150,6 +152,10 @@ impl GameBoy {
         }
     }
 
+    pub fn rom(&self) -> &Ref<Rom> {
+        &self.rom
+    }
+
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
         self.ppu.borrow_mut().set_dmg_palette(palette);
     }
@@ -164,6 +170,10 @@ impl GameBoy {
 
     pub fn audio_buffer(&self) -> &Ref<AudioBuffer> {
         &self.audio_buffer
+    }
+
+    pub fn backup_ram(&self) -> Option<Vec<u8>> {
+        self.mbc.borrow().backup_ram().map(|r| r.to_owned())
     }
 
     pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + 'static>) {

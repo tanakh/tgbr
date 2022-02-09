@@ -1,7 +1,8 @@
-use std::fmt::Display;
-
 use anyhow::{bail, Result};
 use log::warn;
+use std::fmt::Display;
+
+use crate::util::to_si_bytesize;
 
 pub struct Rom {
     pub title: String,
@@ -10,8 +11,8 @@ pub struct Rom {
     pub new_licensee_code: [u8; 2],
     pub sgb_flag: bool,
     pub cartridge_type: CartridgeType,
-    pub rom_size: usize,
-    pub ram_size: usize,
+    pub rom_size: u64,
+    pub ram_size: u64,
     pub destination_code: DestinationCode,
     pub old_licensee_code: u8,
     pub mask_rom_version: u8,
@@ -54,6 +55,7 @@ impl Display for DestinationCode {
 
 #[derive(Default, Clone)]
 pub struct CartridgeType {
+    pub code: u8,
     pub mbc: Option<Mbc>,
     pub has_ram: bool,
     pub has_battery: bool,
@@ -89,40 +91,39 @@ impl Display for Mbc {
 }
 
 impl CartridgeType {
-    fn with_mbc(mbc: Mbc) -> Self {
-        Self {
-            mbc: Some(mbc),
-            ..Default::default()
-        }
-    }
-
     fn from_code(code: u8) -> Self {
+        let ret = Self {
+            code,
+            ..Default::default()
+        };
+
         use Mbc::*;
         match code {
-            0x00 => Self::default(),
-            0x01 => Self::with_mbc(Mbc1),
-            0x02 => Self::with_mbc(Mbc1).with_ram(),
-            0x03 => Self::with_mbc(Mbc1).with_ram().with_battery(),
-            0x05 => Self::with_mbc(Mbc2),
-            0x06 => Self::with_mbc(Mbc2).with_ram(),
-            0x08 => Self::default().with_ram(),
-            0x09 => Self::default().with_ram().with_battery(),
-            0x0B => Self::with_mbc(Mmm01),
-            0x0C => Self::with_mbc(Mmm01).with_ram(),
-            0x0D => Self::with_mbc(Mmm01).with_ram().with_battery(),
-            0x0F => Self::with_mbc(Mbc3).with_timer().with_battery(),
-            0x10 => Self::with_mbc(Mbc3).with_timer().with_ram().with_battery(),
-            0x11 => Self::with_mbc(Mbc3),
-            0x12 => Self::with_mbc(Mbc3).with_ram(),
-            0x13 => Self::with_mbc(Mbc3).with_ram().with_battery(),
-            0x19 => Self::with_mbc(Mbc5),
-            0x1A => Self::with_mbc(Mbc5).with_ram(),
-            0x1B => Self::with_mbc(Mbc5).with_ram().with_battery(),
-            0x1C => Self::with_mbc(Mbc5).with_rumble(),
-            0x1D => Self::with_mbc(Mbc5).with_rumble().with_ram(),
-            0x1E => Self::with_mbc(Mbc5).with_rumble().with_ram().with_battery(),
-            0x20 => Self::with_mbc(Mbc6),
-            0x22 => Self::with_mbc(Mbc7)
+            0x00 => ret,
+            0x01 => ret.with_mbc(Mbc1),
+            0x02 => ret.with_mbc(Mbc1).with_ram(),
+            0x03 => ret.with_mbc(Mbc1).with_ram().with_battery(),
+            0x05 => ret.with_mbc(Mbc2),
+            0x06 => ret.with_mbc(Mbc2).with_ram(),
+            0x08 => ret.with_ram(),
+            0x09 => ret.with_ram().with_battery(),
+            0x0B => ret.with_mbc(Mmm01),
+            0x0C => ret.with_mbc(Mmm01).with_ram(),
+            0x0D => ret.with_mbc(Mmm01).with_ram().with_battery(),
+            0x0F => ret.with_mbc(Mbc3).with_timer().with_battery(),
+            0x10 => ret.with_mbc(Mbc3).with_timer().with_ram().with_battery(),
+            0x11 => ret.with_mbc(Mbc3),
+            0x12 => ret.with_mbc(Mbc3).with_ram(),
+            0x13 => ret.with_mbc(Mbc3).with_ram().with_battery(),
+            0x19 => ret.with_mbc(Mbc5),
+            0x1A => ret.with_mbc(Mbc5).with_ram(),
+            0x1B => ret.with_mbc(Mbc5).with_ram().with_battery(),
+            0x1C => ret.with_mbc(Mbc5).with_rumble(),
+            0x1D => ret.with_mbc(Mbc5).with_rumble().with_ram(),
+            0x1E => ret.with_mbc(Mbc5).with_rumble().with_ram().with_battery(),
+            0x20 => ret.with_mbc(Mbc6),
+            0x22 => ret
+                .with_mbc(Mbc7)
                 .with_sensor()
                 .with_rumble()
                 .with_ram()
@@ -131,12 +132,17 @@ impl CartridgeType {
         }
     }
 
+    fn with_mbc(mut self, mbc: Mbc) -> Self {
+        self.mbc = Some(mbc);
+        self
+    }
+
     fn with_ram(mut self) -> Self {
         self.has_ram = true;
         self
     }
     fn with_battery(mut self) -> Self {
-        self.has_ram = true;
+        self.has_battery = true;
         self
     }
     fn with_timer(mut self) -> Self {
@@ -161,7 +167,8 @@ impl Display for CartridgeType {
             .map_or_else(|| "ROM".to_string(), |mbc| mbc.to_string());
         write!(
             f,
-            "{mbc}{}{}{}{}{}",
+            "{:02X}: {mbc}{}{}{}{}{}",
+            self.code,
             if self.has_ram { "+RAM" } else { "" },
             if self.has_battery { "+BATTERY" } else { "" },
             if self.has_timer { "+TIMER" } else { "" },
@@ -199,12 +206,12 @@ impl Rom {
 
         let cartridge_type = CartridgeType::from_code(header[0x47]);
 
-        let rom_size = match header[0x48] {
+        let rom_size: u64 = match header[0x48] {
             n @ (0x00..=0x08) => (32 * 1024) << n,
             n => bail!("Invalid ROM size: ${n:02X}"),
         };
 
-        if bytes.len() != rom_size {
+        if bytes.len() as u64 != rom_size {
             bail!(
                 "ROM size mismatch: header expected {rom_size}, but actual size is  {}",
                 bytes.len()
@@ -277,8 +284,6 @@ impl Rom {
     }
 
     pub fn info(&self) -> Vec<(&str, String)> {
-        let to_si = |x| bytesize::ByteSize(x as _).to_string_as(true);
-
         vec![
             ("Title", self.title.to_owned()),
             ("Manufacturer Code", {
@@ -295,8 +300,8 @@ impl Rom {
             ),
             ("Suport SGB", self.sgb_flag.to_string()),
             ("Cartridge Type", self.cartridge_type.to_string()),
-            ("ROM Size", to_si(self.rom_size)),
-            ("RAM Size", to_si(self.ram_size)),
+            ("ROM Size", to_si_bytesize(self.rom_size)),
+            ("RAM Size", to_si_bytesize(self.ram_size)),
             ("Destination Code", self.destination_code.to_string()),
             ("Old Licensee Code", self.old_licensee_code.to_string()),
             ("Mask ROM Version", self.mask_rom_version.to_string()),
@@ -305,7 +310,11 @@ impl Rom {
                 format!(
                     "{:02X} ({})",
                     self.header_checksum,
-                    if self.header_checksum_ok { "OK" } else { "Bad" }
+                    if self.header_checksum_ok {
+                        "Good"
+                    } else {
+                        "Bad"
+                    }
                 ),
             ),
             (
@@ -313,7 +322,11 @@ impl Rom {
                 format!(
                     "{:04X} ({})",
                     self.global_checksum,
-                    if self.global_checksum_ok { "OK" } else { "Bad" }
+                    if self.global_checksum_ok {
+                        "Good"
+                    } else {
+                        "Bad"
+                    }
                 ),
             ),
         ]

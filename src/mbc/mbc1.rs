@@ -1,4 +1,8 @@
-use crate::{mbc::Mbc, rom::Rom, util::Ref};
+use crate::{
+    mbc::Mbc,
+    rom::Rom,
+    util::{to_si_bytesize, Ref},
+};
 use bitvec::prelude::*;
 
 pub struct Mbc1 {
@@ -13,12 +17,30 @@ pub struct Mbc1 {
 }
 
 impl Mbc1 {
-    pub fn new(rom: &Ref<Rom>) -> Self {
+    pub fn new(rom: &Ref<Rom>, backup_ram: Option<Vec<u8>>) -> Self {
         let rom_bank_mask = (rom.borrow().rom_size / 0x4000).saturating_sub(1) as u8;
-        let ram_bank_mask = (rom.borrow().ram_size / 0x2000).saturating_sub(1) as u8;
+        let ram_size = rom.borrow().ram_size as usize;
+        let ram_bank_mask = (ram_size / 0x2000).saturating_sub(1) as u8;
+
+        let ram = if let Some(ram) = backup_ram {
+            if !rom.borrow().cartridge_type.has_battery {
+                panic!("Trying to load backup RAM even cartridge has no battery backup RAM");
+            }
+            if ram.len() != ram_size {
+                panic!(
+                    "Loading backup RAM size does not match ROM's info: {} != {}",
+                    to_si_bytesize(ram.len() as _),
+                    to_si_bytesize(ram_size as _)
+                );
+            }
+            ram
+        } else {
+            vec![0; ram_size]
+        };
+
         Self {
             rom: Ref::clone(rom),
-            ram: vec![0; rom.borrow().ram_size],
+            ram,
             rom_bank: 1,
             ram_enable: false,
             ram_bank: 0,
@@ -61,6 +83,14 @@ impl Mbc for Mbc1 {
                 }
             }
             _ => unreachable!(),
+        }
+    }
+
+    fn backup_ram(&self) -> Option<&[u8]> {
+        if self.rom.borrow().cartridge_type.has_battery {
+            Some(&self.ram)
+        } else {
+            None
         }
     }
 }

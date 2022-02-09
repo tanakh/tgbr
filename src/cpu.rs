@@ -2,7 +2,7 @@ use crate::{
     bus::Bus,
     util::{ConstEval, Ref},
 };
-use log::{info, log_enabled, trace, Level};
+use log::{debug, log_enabled, trace, Level};
 
 use bitvec::prelude::*;
 
@@ -222,7 +222,7 @@ impl Cpu {
                 // FIXME: halt bug?
                 if *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow() != 0 {
                     self.halting = false;
-                    info!("WAKE UP");
+                    debug!("WAKE UP");
                 }
                 self.tick();
                 self.prev_interrupt_enable = self.interrupt_master_enable;
@@ -260,7 +260,7 @@ impl Cpu {
         self.push((ret_addr & 0xff) as u8);
 
         self.reg.pc = addr;
-        info!(
+        debug!(
             "Interrupt occured: IE:{:02X}, IF:{:02X}->{:02X}, ADDR:{:04X}",
             *self.interrupt_enable.borrow(),
             prev_if,
@@ -657,11 +657,11 @@ impl Cpu {
             (NOP) => {{}};
             (HALT) => {{
                 self.halting = true;
-                info!("HALT");
+                debug!("HALT");
             }};
             (STOP) => {{
                 self.halting = true;
-                info!("STOP");
+                debug!("STOP");
             }};
             (DI) => {{
                 self.prev_interrupt_enable = false;
