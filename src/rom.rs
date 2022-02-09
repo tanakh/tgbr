@@ -2,7 +2,6 @@ use std::fmt::Display;
 
 use anyhow::{bail, Result};
 use log::warn;
-use prettytable::{cell, format, row, table};
 
 pub struct Rom {
     pub title: String,
@@ -17,7 +16,9 @@ pub struct Rom {
     pub old_licensee_code: u8,
     pub mask_rom_version: u8,
     pub header_checksum: u8,
+    pub header_checksum_ok: bool,
     pub global_checksum: u16,
+    pub global_checksum_ok: bool,
     pub data: Vec<u8>,
 }
 
@@ -233,26 +234,26 @@ impl Rom {
 
         let header_checksum = header[0x4d];
 
-        let mut x = 0_u8;
+        let mut header_checksum_calc = 0_u8;
         for i in 0x34..=0x4c {
-            x = x.wrapping_sub(header[i]).wrapping_sub(1);
+            header_checksum_calc = header_checksum_calc.wrapping_sub(header[i]).wrapping_sub(1);
         }
 
-        if x != header_checksum {
-            warn!("Invalid header checksum: checksum in ROM is ${header_checksum:02X}, but calculated checksum is ${x:02X}");
+        if header_checksum_calc != header_checksum {
+            warn!("Invalid header checksum: checksum in ROM is ${header_checksum:02X}, but calculated checksum is ${header_checksum_calc:02X}");
         }
 
         let global_checksum = (header[0x4e] as u16) << 8 | header[0x4f] as u16;
 
-        let mut check_sum = 0_u16;
+        let mut global_checksum_calc = 0_u16;
         for i in 0..bytes.len() {
             if !(0x14e..=0x14f).contains(&i) {
-                check_sum = check_sum.wrapping_add(bytes[i] as u16);
+                global_checksum_calc = global_checksum_calc.wrapping_add(bytes[i] as u16);
             }
         }
 
-        if global_checksum != check_sum {
-            warn!("Invalid global checksum: checksum in ROM is ${global_checksum:04X}, but calculated checksum is ${check_sum:04X}");
+        if global_checksum_calc != global_checksum {
+            warn!("Invalid global checksum: checksum in ROM is ${global_checksum:04X}, but calculated checksum is ${global_checksum_calc:04X}");
         }
 
         Ok(Rom {
@@ -268,35 +269,53 @@ impl Rom {
             old_licensee_code,
             mask_rom_version,
             header_checksum,
+            header_checksum_ok: header_checksum_calc == header_checksum,
             global_checksum,
+            global_checksum_ok: global_checksum_calc == global_checksum,
             data: bytes.to_vec(),
         })
     }
 
-    pub fn info(&self) {
+    pub fn info(&self) -> Vec<(&str, String)> {
         let to_si = |x| bytesize::ByteSize(x as _).to_string_as(true);
 
-        let mut table = table! {
-            [ "Title", self.title ],
-            [ "Manufacturer Code", {
+        vec![
+            ("Title", self.title.to_owned()),
+            ("Manufacturer Code", {
                 let c = self.manufacturer_code;
                 format!("{:02X} {:02X} {:02X} {:02X}", c[0], c[1], c[2], c[3])
-            }],
-            [ "CGB Flag", self.cgb_flag ],
-            [ "New Licensee Code", format!("{:02X} {:02X}", self.new_licensee_code[0], self.new_licensee_code[1]) ],
-            [ "SGB Flag", self.sgb_flag ],
-            [ "Cartridge Type", self.cartridge_type ],
-            [ "ROM Size",  to_si(self.rom_size) ],
-            [ "RAM Size", to_si(self.ram_size) ],
-            [ "Destination Code", self.destination_code ],
-            [ "Old Licensee Code", self.old_licensee_code ],
-            [ "Mask ROM Version", self.mask_rom_version ],
-            [ "Header Checksum", format!("{:02X}", self.header_checksum) ],
-            [ "Global Checksum", format!("{:04X}", self.global_checksum) ]
-        };
-
-        table.set_titles(row!["ROM File Info"]);
-        table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-        println!("\n{}", table);
+            }),
+            ("CGB Flag", self.cgb_flag.to_string()),
+            (
+                "New Licensee Code",
+                format!(
+                    "{:02X} {:02X}",
+                    self.new_licensee_code[0], self.new_licensee_code[1]
+                ),
+            ),
+            ("Suport SGB", self.sgb_flag.to_string()),
+            ("Cartridge Type", self.cartridge_type.to_string()),
+            ("ROM Size", to_si(self.rom_size)),
+            ("RAM Size", to_si(self.ram_size)),
+            ("Destination Code", self.destination_code.to_string()),
+            ("Old Licensee Code", self.old_licensee_code.to_string()),
+            ("Mask ROM Version", self.mask_rom_version.to_string()),
+            (
+                "Header Checksum",
+                format!(
+                    "{:02X} ({})",
+                    self.header_checksum,
+                    if self.header_checksum_ok { "OK" } else { "Bad" }
+                ),
+            ),
+            (
+                "Global Checksum",
+                format!(
+                    "{:04X} ({})",
+                    self.global_checksum,
+                    if self.global_checksum_ok { "OK" } else { "Bad" }
+                ),
+            ),
+        ]
     }
 }

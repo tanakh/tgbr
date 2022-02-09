@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Result};
-use log::info;
+use log::{info, log_enabled};
 use sdl2::{
     audio::{AudioQueue, AudioSpecDesired},
     controller::{self, GameController},
@@ -60,7 +60,9 @@ fn main(
     env_logger::builder().format_timestamp(None).init();
 
     let rom = load_rom(&file)?;
-    rom.info();
+    if log_enabled!(log::Level::Info) {
+        print_rom_info(&rom.info());
+    }
 
     let boot_rom = if let Some(boot_rom) = boot_rom {
         Some(fs::read(boot_rom)?)
@@ -242,6 +244,21 @@ fn load_rom(file: &Path) -> Result<Rom> {
             Rom::from_bytes(&bytes)
         }
         _ => bail!("Unsupported file extension"),
+    }
+}
+
+fn print_rom_info(info: &[(&str, String)]) {
+    use prettytable::{cell, format, row, Table};
+
+    let mut table = Table::new();
+    for (k, v) in info {
+        table.add_row(row![k, v]);
+    }
+    table.set_titles(row!["ROM File Info"]);
+    table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
+
+    for line in table.to_string().lines() {
+        info!("{line}");
     }
 }
 
