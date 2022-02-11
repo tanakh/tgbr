@@ -79,7 +79,7 @@ fn main(
     let mut gb = GameBoy::new(rom, backup_ram, &config)?;
 
     let (width, height) = {
-        let buf = gb.frame_buffer().borrow();
+        let buf = gb.frame_buffer();
         (buf.width, buf.height)
     };
 
@@ -148,7 +148,7 @@ fn main(
 
         if !is_turbo || frames % 5 == 0 {
             surface.with_lock_mut(|r| {
-                let buf = gb.frame_buffer().borrow();
+                let buf = gb.frame_buffer();
 
                 for y in 0..height {
                     for x in 0..width {

@@ -5,11 +5,16 @@ use serde_big_array::BigArray;
 
 use crate::{
     consts::{
-        DOTS_PER_LINE, INT_LCD_STAT, INT_VBLANK, LINES_PER_FRAME, SCREEN_WIDTH, VISIBLE_RANGE,
+        DOTS_PER_LINE, INT_LCD_STAT_BIT, INT_VBLANK_BIT, LINES_PER_FRAME, SCREEN_WIDTH,
+        VISIBLE_RANGE,
     },
+    context,
     interface::{Color, FrameBuffer},
-    util::{pack, Ref},
+    util::pack,
 };
+
+pub trait Context: context::Vram + context::Oam + context::InterruptFlag {}
+impl<T: context::Vram + context::Oam + context::InterruptFlag> Context for T {}
 
 const MODE_HBLANK: u8 = 0;
 const MODE_VBLANK: u8 = 1;
@@ -20,7 +25,7 @@ const ATTR_NONE: u8 = 0;
 const ATTR_BG: u8 = 1;
 const ATTR_OBJ: u8 = 2;
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 pub struct Ppu {
     ppu_enable: bool,                     // 0=off, 1=on
     window_tile_map_select: bool,         // 0=9800-9BFF, 1=9C00-9FFF
@@ -54,66 +59,20 @@ pub struct Ppu {
 
     dmg_palette: [Color; 4],
 
-    #[serde(with = "BigArray")]
-    line_buffer: [u8; SCREEN_WIDTH as usize],
-    #[serde(with = "BigArray")]
-    line_buffer_attr: [u8; SCREEN_WIDTH as usize],
-    #[serde(skip_serializing)]
-    frame_buffer: Ref<FrameBuffer>,
+    line_buffer: Vec<u8>,
+    line_buffer_attr: Vec<u8>,
 
-    #[serde(skip_serializing)]
-    vram: Ref<Vec<u8>>,
-    #[serde(skip_serializing)]
-    oam: Ref<Vec<u8>>,
-    #[serde(skip_serializing)]
-    oam_lock: Ref<bool>,
-    #[serde(skip_serializing)]
-    interrupt_flag: Ref<u8>,
+    #[serde(skip)]
+    frame_buffer: FrameBuffer,
 }
 
 impl Ppu {
-    pub fn new(
-        vram: &Ref<Vec<u8>>,
-        oam: &Ref<Vec<u8>>,
-        oam_lock: &Ref<bool>,
-        interrupt_flag: &Ref<u8>,
-        frame_buffer: &Ref<FrameBuffer>,
-        dmg_palette: &[Color; 4],
-    ) -> Self {
+    pub fn new(dmg_palette: &[Color; 4]) -> Self {
         Self {
-            ppu_enable: false,
-            window_tile_map_select: false,
-            window_enable: false,
-            bg_and_window_tile_data_select: false,
-            bg_tile_map_select: false,
-            obj_size: false,
-            obj_enable: false,
-            bg_and_window_enable: false,
-            lyc_interrupt_enable: false,
-            oam_interrupt_enable: false,
-            vblank_interrupt_enable: false,
-            hblank_interrupt_enable: false,
-            mode: 0,
-            prev_lcd_interrupt: false,
-            scroll_y: 0,
-            scroll_x: 0,
-            ly: 0,
-            lyc: 0,
-            window_y: 0,
-            window_x: 0,
-            bg_palette: [0; 4],
-            obj_palette: [[0; 4]; 2],
-            lx: 0,
-            frame: 0,
-            window_rendering_counter: 0,
-            line_buffer: [0; SCREEN_WIDTH as usize],
-            line_buffer_attr: [0; SCREEN_WIDTH as usize],
-            frame_buffer: Ref::clone(frame_buffer),
-            vram: Ref::clone(vram),
-            oam: Ref::clone(oam),
-            oam_lock: Ref::clone(oam_lock),
-            interrupt_flag: Ref::clone(interrupt_flag),
+            line_buffer: vec![0; SCREEN_WIDTH as usize],
+            line_buffer_attr: vec![0; SCREEN_WIDTH as usize],
             dmg_palette: dmg_palette.clone(),
+            ..Default::default()
         }
     }
 
@@ -121,7 +80,11 @@ impl Ppu {
         self.dmg_palette = palette.clone();
     }
 
-    pub fn tick(&mut self) {
+    pub fn frame_buffer(&self) -> &FrameBuffer {
+        &self.frame_buffer
+    }
+
+    pub fn tick(&mut self, ctx: &mut impl Context) {
         self.lx += 1;
         if self.lx == DOTS_PER_LINE {
             self.lx = 0;
@@ -142,38 +105,38 @@ impl Ppu {
 
         if VISIBLE_RANGE.contains(&(self.ly as u64)) {
             if self.lx < 80 {
-                self.set_mode(MODE_OAM_SEARCH);
+                self.set_mode(ctx, MODE_OAM_SEARCH);
             } else {
                 // FIXME: Calculate accurate timing
                 let transfer_period = 172 + self.scroll_x as u64 % 8;
 
                 if self.lx < 80 + transfer_period {
-                    self.set_mode(MODE_TRANSFER);
+                    self.set_mode(ctx, MODE_TRANSFER);
                 } else {
-                    self.set_mode(MODE_HBLANK);
+                    self.set_mode(ctx, MODE_HBLANK);
                 }
             }
         } else {
-            self.set_mode(MODE_VBLANK);
+            self.set_mode(ctx, MODE_VBLANK);
         }
 
-        self.update_lcd_interrupt();
+        self.update_lcd_interrupt(ctx);
     }
 
-    fn set_mode(&mut self, mode: u8) {
+    fn set_mode(&mut self, ctx: &mut impl Context, mode: u8) {
         if self.mode != mode {
             if mode == MODE_VBLANK {
-                *self.interrupt_flag.borrow_mut() |= INT_VBLANK;
+                ctx.set_interrupt_flag_bit(INT_VBLANK_BIT);
             }
             if mode == MODE_TRANSFER {
-                self.render_line();
+                self.render_line(ctx);
             }
-            *self.oam_lock.borrow_mut() = matches!(mode, MODE_OAM_SEARCH | MODE_TRANSFER);
+            ctx.lock_oam(matches!(mode, MODE_OAM_SEARCH | MODE_TRANSFER));
         }
         self.mode = mode;
     }
 
-    fn update_lcd_interrupt(&mut self) {
+    fn update_lcd_interrupt(&mut self, ctx: &mut impl Context) {
         let cur_lcd_interrupt = match self.mode {
             MODE_HBLANK => self.hblank_interrupt_enable,
             MODE_VBLANK => {
@@ -187,7 +150,7 @@ impl Ppu {
         } || (self.lyc_interrupt_enable && self.ly == self.lyc);
 
         if !self.prev_lcd_interrupt && cur_lcd_interrupt {
-            *self.interrupt_flag.borrow_mut() |= INT_LCD_STAT;
+            ctx.set_interrupt_flag_bit(INT_LCD_STAT_BIT);
         }
         self.prev_lcd_interrupt = cur_lcd_interrupt;
     }
@@ -337,35 +300,35 @@ impl Ppu {
 }
 
 impl Ppu {
-    fn render_line(&mut self) {
+    fn render_line(&mut self, ctx: &mut impl Context) {
         self.line_buffer.fill(0);
         self.line_buffer_attr.fill(ATTR_NONE);
         if self.ppu_enable && self.bg_and_window_enable {
-            self.render_bg_line();
+            self.render_bg_line(ctx);
         }
         if self.ppu_enable && self.obj_enable {
-            self.render_obj_line();
+            self.render_obj_line(ctx);
         }
-        let mut fb = self.frame_buffer.borrow_mut();
+        let y = self.ly as usize;
         for x in 0..SCREEN_WIDTH as usize {
             let c = self.line_buffer[x];
-            fb.set(x, self.ly as _, self.dmg_palette[(c & 3) as usize])
+            let color = self.dmg_palette[(c & 3) as usize];
+            self.frame_buffer.set(x, y, color)
         }
     }
 
-    fn render_bg_line(&mut self) {
-        let vram = self.vram.borrow();
-        let tile_data = if self.bg_and_window_tile_data_select {
+    fn render_bg_line(&mut self, ctx: &mut impl Context) {
+        let tile_data: u16 = if self.bg_and_window_tile_data_select {
             0x0000
         } else {
             0x1000
         };
-        let bg_tile_map = if self.bg_tile_map_select {
+        let bg_tile_map: u16 = if self.bg_tile_map_select {
             0x1c00
         } else {
             0x1800
         };
-        let window_tile_map = if self.window_tile_map_select {
+        let window_tile_map: u16 = if self.window_tile_map_select {
             0x1c00
         } else {
             0x1800
@@ -390,20 +353,20 @@ impl Ppu {
                     )
                 };
 
-            let tile_x = x as usize / 8;
-            let tile_y = y as usize / 8;
-            let ofs_x = x as usize % 8;
-            let ofs_y = y as usize % 8;
+            let tile_x = x as u16 / 8;
+            let tile_y = y as u16 / 8;
+            let ofs_x = x as u16 % 8;
+            let ofs_y = y as u16 % 8;
 
-            let tile_ix = vram[tile_map + tile_y * 32 + tile_x];
+            let tile_ix = ctx.read_vram(tile_map + tile_y * 32 + tile_x, true);
 
-            let mut tile_addr = tile_data + (tile_ix as usize * 16);
+            let mut tile_addr = tile_data + (tile_ix as u16 * 16);
             if tile_addr >= 0x1800 {
                 tile_addr -= 0x1000;
             }
 
-            let lo = vram[tile_addr + ofs_y * 2];
-            let hi = vram[tile_addr + ofs_y * 2 + 1];
+            let lo = ctx.read_vram(tile_addr + ofs_y * 2, true);
+            let hi = ctx.read_vram(tile_addr + ofs_y * 2 + 1, true);
 
             let b = (lo >> (7 - ofs_x)) & 1 | ((hi >> (7 - ofs_x)) & 1) << 1;
 
@@ -416,9 +379,7 @@ impl Ppu {
         }
     }
 
-    fn render_obj_line(&mut self) {
-        let oam = self.oam.borrow();
-        let vram = self.vram.borrow();
+    fn render_obj_line(&mut self, ctx: &mut impl Context) {
         let w = self.line_buffer.len();
 
         let obj_size = if self.obj_size { 16 } else { 8 };
@@ -427,9 +388,9 @@ impl Ppu {
         let mut render_objs = [(0xff, 0xff); 10];
 
         for i in 0..40 {
-            let r = &oam[i * 4..i * 4 + 4];
-            let y = r[0];
-            let x = r[1];
+            let ofs = i * 4;
+            let y = ctx.read_oam(ofs, true);
+            let x = ctx.read_oam(ofs + 1, true);
             if (y..y + obj_size).contains(&(self.ly + 16)) {
                 render_objs[obj_count] = (x, i);
                 obj_count += 1;
@@ -446,13 +407,14 @@ impl Ppu {
 
         for i in 0..obj_count {
             let i = render_objs[i].1;
-            let r = &oam[i * 4..i * 4 + 4];
+            let ofs = (i * 4) as u8;
 
-            let y = r[0];
-            let x = r[1];
-            let tile_index = r[2];
+            let y = ctx.read_oam(ofs, true);
+            let x = ctx.read_oam(ofs + 1, true);
+            let tile_index = ctx.read_oam(ofs + 2, true);
 
-            let v = r[3].view_bits::<Lsb0>();
+            let attr = ctx.read_oam(ofs + 3, true);
+            let v = attr.view_bits::<Lsb0>();
             let bg_and_window_over_obj = v[7];
             let y_flip = v[6];
             let x_flip = v[5];
@@ -468,15 +430,15 @@ impl Ppu {
 
             let tile_addr = if obj_size == 8 {
                 let ofs_y = if y_flip { 7 - ofs_y } else { ofs_y };
-                (tile_index as usize * 16) + ofs_y as usize * 2
+                (tile_index as u16 * 16) + ofs_y as u16 * 2
             } else {
                 let ofs_y = if y_flip { 15 - ofs_y } else { ofs_y };
-                ((tile_index & !1) as usize * 16 + if ofs_y >= 8 { 16 } else { 0 })
-                    + (ofs_y & 7) as usize * 2
+                ((tile_index & !1) as u16 * 16 + if ofs_y >= 8 { 16 } else { 0 })
+                    + (ofs_y & 7) as u16 * 2
             };
 
-            let lo = vram[tile_addr];
-            let hi = vram[tile_addr + 1];
+            let lo = ctx.read_vram(tile_addr, true);
+            let hi = ctx.read_vram(tile_addr + 1, true);
 
             for ofs_x in 0..8 {
                 let scr_x = x as usize + ofs_x;

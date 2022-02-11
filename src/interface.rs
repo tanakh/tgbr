@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::consts::{SCREEN_HEIGHT, SCREEN_WIDTH};
+
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Input {
     pub pad: Pad,
@@ -17,7 +19,7 @@ pub struct Pad {
     pub select: bool,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -30,11 +32,17 @@ impl Color {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FrameBuffer {
     pub width: usize,
     pub height: usize,
     pub buf: Vec<Color>,
+}
+
+impl Default for FrameBuffer {
+    fn default() -> Self {
+        Self::new(SCREEN_WIDTH as _, SCREEN_HEIGHT as _)
+    }
 }
 
 impl FrameBuffer {

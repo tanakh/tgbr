@@ -270,8 +270,7 @@ impl Cpu {
             0x0000
         } else {
             let pos = b.trailing_zeros();
-            let new_if = ctx.interrupt_flag() & !(1 << pos);
-            ctx.set_interrupt_flag(new_if);
+            ctx.clear_interrupt_flag_bit(pos as _);
             0x0040 + pos as u16 * 8
         }
     }

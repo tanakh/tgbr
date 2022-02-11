@@ -65,12 +65,6 @@ impl Io {
     }
 
     pub fn tick(&mut self) {
-        for _ in 0..4 {
-            self.ppu.borrow_mut().tick();
-            self.apu.borrow_mut().tick();
-        }
-        self.serial.tick();
-
         self.divider = self.divider.wrapping_add(4);
 
         self.timer_reloaded = false;
@@ -110,6 +104,10 @@ impl Io {
                 *self.interrupt_flag.borrow_mut() |= INT_JOYPAD;
             }
         }
+    }
+
+    pub fn serial(&mut self) -> &mut SerialTransfer {
+        &mut self.serial
     }
 
     pub fn set_link_cable(&mut self, link_cable: Option<Ref<dyn LinkCable>>) {

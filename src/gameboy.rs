@@ -5,7 +5,6 @@ use crate::{
     apu::Apu,
     bus,
     config::{Config, Model},
-    consts::{SCREEN_HEIGHT, SCREEN_WIDTH},
     context,
     cpu::Cpu,
     interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable},
@@ -19,23 +18,23 @@ use crate::{
 #[derive(Serialize)]
 pub struct GameBoy {
     cpu: Cpu,
-    ppu: Ref<Ppu>,
-    apu: Ref<Apu>,
     ctx: Context,
     model: Model,
     #[serde(skip)]
     rom: Ref<Rom>,
     #[serde(skip)]
-    frame_buffer: Ref<FrameBuffer>,
-    #[serde(skip)]
     audio_buffer: Ref<AudioBuffer>,
+
+    // FIXME: Remove this
+    #[serde(skip)]
+    frame_buffer: FrameBuffer,
 }
 
 #[derive(Serialize)]
 struct Context {
+    ppu: Ref<Ppu>,
+    apu: Ref<Apu>,
     bus: Ref<bus::Bus>,
-    interrupt_enable: Ref<u8>,
-    interrupt_flag: Ref<u8>,
     bus_context: BusContext,
 }
 
@@ -45,16 +44,18 @@ struct BusContext {
     vram_lock: Ref<bool>,
     oam: Ref<Vec<u8>>,
     oam_lock: Ref<bool>,
+    interrupt_enable: Ref<u8>,
+    interrupt_flag: Ref<u8>,
 }
 
 impl GameBoy {
     pub fn new(rom: Rom, backup_ram: Option<Vec<u8>>, config: &Config) -> Result<Self> {
         let rom = Ref::new(rom);
         let mbc = create_mbc(&rom, backup_ram);
-        let frame_buffer = Ref::new(FrameBuffer::new(
-            SCREEN_WIDTH as usize,
-            SCREEN_HEIGHT as usize,
-        ));
+        // let frame_buffer = Ref::new(FrameBuffer::new(
+        //     SCREEN_WIDTH as usize,
+        //     SCREEN_HEIGHT as usize,
+        // ));
         let audio_buffer = Ref::new(AudioBuffer::new());
 
         let interrupt_enable = Ref::new(0x00);
@@ -66,11 +67,11 @@ impl GameBoy {
         let oam_lock = Ref::new(false);
 
         let ppu = Ref::new(Ppu::new(
-            &vram,
-            &oam,
-            &oam_lock,
-            &interrupt_flag,
-            &frame_buffer,
+            // &vram,
+            // &oam,
+            // &oam_lock,
+            // &interrupt_flag,
+            // &frame_buffer,
             &config.dmg_palette,
         ));
         let apu = Ref::new(Apu::new(&audio_buffer));
@@ -106,22 +107,22 @@ impl GameBoy {
 
         let mut ret = Self {
             cpu,
-            ppu,
-            apu,
             rom,
             ctx: Context {
+                ppu,
+                apu,
                 bus,
-                interrupt_enable,
-                interrupt_flag,
                 bus_context: BusContext {
                     vram,
                     vram_lock,
                     oam,
                     oam_lock,
+                    interrupt_enable,
+                    interrupt_flag,
                 },
             },
             model,
-            frame_buffer,
+            frame_buffer: Default::default(),
             audio_buffer,
         };
 
@@ -169,8 +170,8 @@ impl GameBoy {
     pub fn exec_frame(&mut self) {
         self.audio_buffer.borrow_mut().buf.clear();
 
-        let start_frame = self.ppu.borrow().frame();
-        while start_frame == self.ppu.borrow().frame() {
+        let start_frame = self.ctx.ppu.borrow().frame();
+        while start_frame == self.ctx.ppu.borrow().frame() {
             self.cpu.step(&mut self.ctx);
         }
     }
@@ -180,14 +181,16 @@ impl GameBoy {
     }
 
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
-        self.ppu.borrow_mut().set_dmg_palette(palette);
+        self.ctx.ppu.borrow_mut().set_dmg_palette(palette);
     }
 
     pub fn set_input(&mut self, input: &Input) {
         self.ctx.bus.borrow_mut().io().set_input(input);
     }
 
-    pub fn frame_buffer(&self) -> &Ref<FrameBuffer> {
+    pub fn frame_buffer(&mut self) -> &FrameBuffer {
+        let ppu = self.ctx.ppu.borrow();
+        self.frame_buffer = ppu.frame_buffer().clone();
         &self.frame_buffer
     }
 
@@ -218,27 +221,14 @@ impl GameBoy {
     // }
 }
 
-impl context::InterruptFlag for Context {
-    fn interrupt_enable(&mut self) -> u8 {
-        *self.interrupt_enable.borrow()
-    }
-
-    fn set_interrupt_enable(&mut self, data: u8) {
-        *self.interrupt_enable.borrow_mut() = data;
-    }
-
-    fn interrupt_flag(&mut self) -> u8 {
-        *self.interrupt_flag.borrow()
-    }
-
-    fn set_interrupt_flag(&mut self, data: u8) {
-        *self.interrupt_flag.borrow_mut() = data;
-    }
-}
-
 impl context::Bus for Context {
     fn tick(&mut self) {
         self.bus.borrow_mut().tick(&mut self.bus_context);
+        for _ in 0..4 {
+            self.ppu.borrow_mut().tick(&mut self.bus_context);
+            self.apu.borrow_mut().tick();
+        }
+        self.bus.borrow_mut().io().serial().tick();
         self.bus.borrow_mut().io().tick();
     }
 
@@ -259,17 +249,53 @@ impl context::Bus for Context {
     }
 }
 
+impl context::InterruptFlag for Context {
+    fn interrupt_enable(&mut self) -> u8 {
+        self.bus_context.interrupt_enable()
+    }
+
+    fn set_interrupt_enable(&mut self, data: u8) {
+        self.bus_context.set_interrupt_enable(data)
+    }
+
+    fn interrupt_flag(&mut self) -> u8 {
+        self.bus_context.interrupt_flag()
+    }
+
+    fn set_interrupt_flag(&mut self, data: u8) {
+        self.bus_context.set_interrupt_flag(data)
+    }
+}
+
+impl context::InterruptFlag for BusContext {
+    fn interrupt_enable(&mut self) -> u8 {
+        *self.interrupt_enable.borrow()
+    }
+
+    fn set_interrupt_enable(&mut self, data: u8) {
+        *self.interrupt_enable.borrow_mut() = data;
+    }
+
+    fn interrupt_flag(&mut self) -> u8 {
+        *self.interrupt_flag.borrow()
+    }
+
+    fn set_interrupt_flag(&mut self, data: u8) {
+        *self.interrupt_flag.borrow_mut() = data;
+    }
+}
+
 impl context::Vram for BusContext {
-    fn read_vram(&self, addr: u16) -> u8 {
-        if !*self.vram_lock.borrow() {
+    fn read_vram(&self, addr: u16, force: bool) -> u8 {
+        if force || !*self.vram_lock.borrow() {
             self.vram.borrow()[addr as usize]
         } else {
             !0
         }
     }
 
-    fn write_vram(&mut self, addr: u16, data: u8) {
-        if !*self.vram_lock.borrow() {
+    fn write_vram(&mut self, addr: u16, data: u8, force: bool) {
+        if force || !*self.vram_lock.borrow() {
             self.vram.borrow_mut()[addr as usize] = data;
         }
     }
@@ -280,16 +306,16 @@ impl context::Vram for BusContext {
 }
 
 impl context::Oam for BusContext {
-    fn read_oam(&self, addr: u8) -> u8 {
-        if !*self.oam_lock.borrow() {
+    fn read_oam(&self, addr: u8, force: bool) -> u8 {
+        if force || !*self.oam_lock.borrow() {
             self.oam.borrow()[addr as usize]
         } else {
             !0
         }
     }
 
-    fn write_oam(&mut self, addr: u8, data: u8) {
-        if !*self.oam_lock.borrow() {
+    fn write_oam(&mut self, addr: u8, data: u8, force: bool) {
+        if force || !*self.oam_lock.borrow() {
             self.oam.borrow_mut()[addr as usize] = data;
         }
     }

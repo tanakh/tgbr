@@ -67,12 +67,12 @@ impl Bus {
                 }
             }
             0x0100..=0x7fff => self.mbc.read(addr),
-            0x8000..=0x9fff => ctx.read_vram(addr & 0x1fff),
+            0x8000..=0x9fff => ctx.read_vram(addr & 0x1fff, false),
             0xa000..=0xbfff => self.mbc.read(addr),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize],
             0xfe00..=0xfe9f => {
                 if !self.dma.enabled {
-                    ctx.read_oam((addr & 0xff) as u8)
+                    ctx.read_oam((addr & 0xff) as u8, false)
                 } else {
                     !0
                 }
@@ -90,12 +90,12 @@ impl Bus {
         trace!("--> Write: ${addr:04X} = ${data:02X}");
         match addr {
             0x0000..=0x7fff => self.mbc.write(addr, data),
-            0x8000..=0x9fff => ctx.write_vram(addr & 0x1fff, data),
+            0x8000..=0x9fff => ctx.write_vram(addr & 0x1fff, data, false),
             0xa000..=0xbfff => self.mbc.write(addr, data),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize] = data,
             0xfe00..=0xfe9f => {
                 if !self.dma.enabled {
-                    ctx.write_oam((addr & 0xff) as u8, data)
+                    ctx.write_oam((addr & 0xff) as u8, data, false)
                 }
             }
             0xfea0..=0xfeff => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
@@ -144,7 +144,7 @@ impl Bus {
             self.dma.pos
         );
         let data = self.read_(ctx, (self.dma.source as u16) << 8 | self.dma.pos as u16);
-        ctx.write_oam(self.dma.pos, data);
+        ctx.write_oam(self.dma.pos, data, true);
         self.dma.pos += 1;
         if self.dma.pos == 0xA0 {
             self.dma.enabled = false;
