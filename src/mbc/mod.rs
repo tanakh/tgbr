@@ -33,9 +33,9 @@ impl NullMbc {
         }
     }
 
-    pub fn write(&mut self, ctx: &mut impl Context, _addr: u16, _data: u8) {}
+    pub fn write(&mut self, _ctx: &mut impl Context, _addr: u16, _data: u8) {}
 
-    pub fn backup_ram(&self, ctx: &mut impl Context) -> Option<&[u8]> {
+    pub fn backup_ram(&self, _ctx: &mut impl Context) -> Option<&[u8]> {
         None
     }
 }

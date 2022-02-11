@@ -1,28 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, ops::Deref, rc::Rc};
-
-#[derive(Serialize)]
-#[serde(bound = "T: Serialize + Sized")]
-pub struct Ref<T: ?Sized>(pub Rc<RefCell<T>>);
-
-impl<T> Ref<T> {
-    pub fn new(t: T) -> Self {
-        Ref(Rc::new(RefCell::new(t)))
-    }
-}
-
-impl<T: ?Sized> Deref for Ref<T> {
-    type Target = RefCell<T>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T: ?Sized> Clone for Ref<T> {
-    fn clone(&self) -> Self {
-        Ref(Rc::clone(&self.0))
-    }
-}
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct ClockDivider {

@@ -63,7 +63,7 @@ impl Mbc1 {
         }
     }
 
-    pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
+    pub fn write(&mut self, _ctx: &mut impl Context, addr: u16, data: u8) {
         match addr {
             0x0000..=0x1FFF => self.ram_enable = data & 0x0F == 0x0A,
             0x2000..=0x3FFF => self.rom_bank.view_bits_mut::<Lsb0>()[0..=4]

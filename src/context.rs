@@ -1,4 +1,9 @@
-use crate::rom;
+use crate::{apu, ppu, rom};
+
+trait NestedContext {
+    type Inner;
+    fn inner(&self) -> &Self::Inner;
+}
 
 pub trait Bus {
     fn tick(&mut self);
@@ -37,13 +42,13 @@ pub trait Oam {
 }
 
 pub trait Ppu {
-    fn read_ppu(&mut self, addr: u16) -> u8;
-    fn write_ppu(&mut self, addr: u16, data: u8);
+    fn ppu(&self) -> &ppu::Ppu;
+    fn ppu_mut(&mut self) -> &mut ppu::Ppu;
 }
 
 pub trait Apu {
-    fn read_apu(&mut self, addr: u16) -> u8;
-    fn write_apu(&mut self, addr: u16, data: u8);
+    fn apu(&self) -> &apu::Apu;
+    fn apu_mut(&mut self) -> &mut apu::Apu;
 }
 
 pub trait Rom {

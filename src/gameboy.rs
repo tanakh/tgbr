@@ -12,17 +12,13 @@ use crate::{
     mbc::create_mbc,
     ppu::Ppu,
     rom::{CgbFlag, Rom},
-    util::Ref,
 };
 
 #[derive(Serialize)]
 pub struct GameBoy {
     cpu: Cpu,
-    ctx: Context,
     model: Model,
-    // FIXME: Remove this
-    #[serde(skip)]
-    frame_buffer: FrameBuffer,
+    ctx: Context,
 }
 
 #[derive(Serialize)]
@@ -35,7 +31,7 @@ struct Context {
 struct BusContext {
     #[serde(skip_serializing)]
     rom: Rom,
-    ppu: Ref<Ppu>,
+    ppu: Ppu,
     ppu_context: PpuContext,
 }
 
@@ -52,17 +48,14 @@ struct PpuContext {
 
 impl GameBoy {
     pub fn new(rom: Rom, backup_ram: Option<Vec<u8>>, config: &Config) -> Result<Self> {
-        let mbc = create_mbc(&rom, backup_ram);
-
+        let cpu = Cpu::new();
+        let ppu = Ppu::new(&config.dmg_palette);
+        let apu = Apu::new();
+        let io = Io::new();
         let vram = vec![0; 0x2000];
         let oam = vec![0; 0xA0];
-
-        let ppu = Ref::new(Ppu::new(&config.dmg_palette));
-        let apu = Apu::new();
-
-        let io = Io::new();
+        let mbc = create_mbc(&rom, backup_ram);
         let bus = Bus::new(mbc, &config.boot_rom, io);
-        let cpu = Cpu::new();
 
         // Set up the contents of registers after internal ROM execution
         let model = match rom.cgb_flag {
@@ -108,7 +101,6 @@ impl GameBoy {
                 },
             },
             model,
-            frame_buffer: Default::default(),
         };
 
         if !config.boot_rom.is_some() {
@@ -161,8 +153,8 @@ impl GameBoy {
             .buf
             .clear();
 
-        let start_frame = self.ctx.bus_context.ppu.borrow().frame();
-        while start_frame == self.ctx.bus_context.ppu.borrow().frame() {
+        let start_frame = self.ctx.bus_context.ppu.frame();
+        while start_frame == self.ctx.bus_context.ppu.frame() {
             self.cpu.step(&mut self.ctx);
         }
     }
@@ -172,11 +164,7 @@ impl GameBoy {
     // }
 
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
-        self.ctx
-            .bus_context
-            .ppu
-            .borrow_mut()
-            .set_dmg_palette(palette);
+        self.ctx.bus_context.ppu.set_dmg_palette(palette);
     }
 
     pub fn set_input(&mut self, input: &Input) {
@@ -186,10 +174,8 @@ impl GameBoy {
             .set_input(&mut self.ctx.bus_context, input);
     }
 
-    pub fn frame_buffer(&mut self) -> &FrameBuffer {
-        let ppu = self.ctx.bus_context.ppu.borrow();
-        self.frame_buffer = ppu.frame_buffer().clone();
-        &self.frame_buffer
+    pub fn frame_buffer(&self) -> &FrameBuffer {
+        self.ctx.bus_context.ppu.frame_buffer()
     }
 
     pub fn audio_buffer(&self) -> &AudioBuffer {
@@ -218,10 +204,7 @@ impl context::Bus for Context {
     fn tick(&mut self) {
         self.bus.tick(&mut self.bus_context);
         for _ in 0..4 {
-            self.bus_context
-                .ppu
-                .borrow_mut()
-                .tick(&mut self.bus_context.ppu_context);
+            self.bus_context.ppu.tick(&mut self.bus_context.ppu_context);
             self.bus_context.ppu_context.apu.tick();
         }
         self.bus.io().serial().tick(&mut self.bus_context);
@@ -244,6 +227,26 @@ impl context::Bus for Context {
 impl context::Rom for BusContext {
     fn rom(&self) -> &Rom {
         &self.rom
+    }
+}
+
+impl context::Ppu for BusContext {
+    fn ppu(&self) -> &Ppu {
+        &self.ppu
+    }
+
+    fn ppu_mut(&mut self) -> &mut Ppu {
+        &mut self.ppu
+    }
+}
+
+impl context::Apu for BusContext {
+    fn apu(&self) -> &Apu {
+        &self.ppu_context.apu
+    }
+
+    fn apu_mut(&mut self) -> &mut Apu {
+        &mut self.ppu_context.apu
     }
 }
 
@@ -366,25 +369,5 @@ impl context::Oam for PpuContext {
 
     fn lock_oam(&mut self, lock: bool) {
         self.oam_lock = lock;
-    }
-}
-
-impl context::Ppu for BusContext {
-    fn read_ppu(&mut self, addr: u16) -> u8 {
-        self.ppu.borrow_mut().read(addr)
-    }
-
-    fn write_ppu(&mut self, addr: u16, data: u8) {
-        self.ppu.borrow_mut().write(addr, data);
-    }
-}
-
-impl context::Apu for BusContext {
-    fn read_apu(&mut self, addr: u16) -> u8 {
-        self.ppu_context.apu.read(addr)
-    }
-
-    fn write_apu(&mut self, addr: u16, data: u8) {
-        self.ppu_context.apu.write(addr, data)
     }
 }

@@ -159,9 +159,9 @@ impl Io {
             },
 
             // APU Registers
-            0x10..=0x3F => ctx.read_apu(addr),
+            0x10..=0x3F => ctx.apu_mut().read(addr),
             // PPU Registers
-            0x40..=0x4B => ctx.read_ppu(addr),
+            0x40..=0x4B => ctx.ppu_mut().read(addr),
 
             _ => {
                 warn!("Unknown I/O Read: {:04X}", addr);
@@ -223,9 +223,9 @@ impl Io {
             }
 
             // APU Registers
-            0x10..=0x3F => ctx.write_apu(addr, data),
+            0x10..=0x3F => ctx.apu_mut().write(addr, data),
             // PPU Registers
-            0x40..=0x4B => ctx.write_ppu(addr, data),
+            0x40..=0x4B => ctx.ppu_mut().write(addr, data),
 
             _ => {
                 warn!("Write to ${:04X} = ${:02X}", addr, data);
