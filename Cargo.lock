@@ -18,6 +18,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ambassador"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61874b33258f18ca7923047c12887078ccfe95c2811b03c1a09e309c19b7e50b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -872,6 +883,7 @@ dependencies = [
 name = "tgbr-core"
 version = "0.1.0"
 dependencies = [
+ "ambassador",
  "anyhow",
  "bitvec",
  "bytesize",

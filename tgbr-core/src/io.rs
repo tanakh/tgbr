@@ -3,7 +3,7 @@ use log::{trace, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    consts::{INT_JOYPAD_BIT, INT_TIMER_BIT},
+    consts::{INT_JOYPAD, INT_TIMER},
     context,
     interface::{Input, LinkCable},
     serial::SerialTransfer,
@@ -57,7 +57,7 @@ impl Io {
         if self.timer_reload {
             log::trace!("Timer reload: ${:02X}", self.timer_modulo);
             self.timer_counter = self.timer_modulo;
-            ctx.set_interrupt_flag_bit(INT_TIMER_BIT);
+            ctx.set_interrupt_flag_bit(INT_TIMER);
             self.timer_reload = false;
             self.timer_reloaded = true;
         }
@@ -86,7 +86,7 @@ impl Io {
 
         for i in 0..4 {
             if prev_lines[i] && !cur_lines[i] {
-                ctx.set_interrupt_flag_bit(INT_JOYPAD_BIT);
+                ctx.set_interrupt_flag_bit(INT_JOYPAD);
             }
         }
     }

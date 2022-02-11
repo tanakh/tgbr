@@ -2,7 +2,7 @@ use bitvec::prelude::*;
 use log::trace;
 use serde::{Deserialize, Serialize};
 
-use crate::{consts::INT_SERIAL_BIT, context, interface::LinkCable, util::pack};
+use crate::{consts::INT_SERIAL, context, interface::LinkCable, util::pack};
 
 #[derive(Serialize, Deserialize)]
 pub struct SerialTransfer {
@@ -73,7 +73,7 @@ impl SerialTransfer {
             self.recv_buf = None;
             self.transfer_pos = 0;
             self.transfer_progress = false;
-            ctx.set_interrupt_flag_bit(INT_SERIAL_BIT);
+            ctx.set_interrupt_flag_bit(INT_SERIAL);
         }
     }
 

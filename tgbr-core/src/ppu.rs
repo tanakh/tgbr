@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     consts::{
-        DOTS_PER_LINE, INT_LCD_STAT_BIT, INT_VBLANK_BIT, LINES_PER_FRAME, SCREEN_WIDTH,
-        VISIBLE_RANGE,
+        DOTS_PER_LINE, INT_LCD_STAT, INT_VBLANK, LINES_PER_FRAME, SCREEN_WIDTH, VISIBLE_RANGE,
     },
     context,
     interface::{Color, FrameBuffer},
@@ -127,7 +126,7 @@ impl Ppu {
     fn set_mode(&mut self, ctx: &mut impl Context, mode: u8) {
         if self.mode != mode {
             if mode == MODE_VBLANK {
-                ctx.set_interrupt_flag_bit(INT_VBLANK_BIT);
+                ctx.set_interrupt_flag_bit(INT_VBLANK);
             }
             if mode == MODE_TRANSFER {
                 self.render_line(ctx);
@@ -151,7 +150,7 @@ impl Ppu {
         } || (self.lyc_interrupt_enable && self.ly == self.lyc);
 
         if !self.prev_lcd_interrupt && cur_lcd_interrupt {
-            ctx.set_interrupt_flag_bit(INT_LCD_STAT_BIT);
+            ctx.set_interrupt_flag_bit(INT_LCD_STAT);
         }
         self.prev_lcd_interrupt = cur_lcd_interrupt;
     }
