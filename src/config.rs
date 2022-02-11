@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::interface::Color;
 
@@ -15,7 +15,7 @@ pub struct Config {
     pub boot_rom: Option<Vec<u8>>,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Serialize)]
+#[derive(PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Model {
     Auto,
     Dmg,

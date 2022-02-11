@@ -14,28 +14,28 @@ use crate::{
     rom::{CgbFlag, Rom},
 };
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct GameBoy {
     cpu: Cpu,
     model: Model,
     ctx: Context,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Context {
     bus: Bus,
     bus_context: BusContext,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct BusContext {
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     rom: Rom,
     ppu: Ppu,
     ppu_context: PpuContext,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct PpuContext {
     apu: Apu,
     vram: Vec<u8>,
@@ -158,10 +158,6 @@ impl GameBoy {
             self.cpu.step(&mut self.ctx);
         }
     }
-
-    // pub fn rom(&self) -> &Ref<Rom> {
-    //     &self.rom
-    // }
 
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
         self.ctx.bus_context.ppu.set_dmg_palette(palette);

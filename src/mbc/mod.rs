@@ -42,7 +42,7 @@ impl NullMbc {
 
 macro_rules! def_mbc {
     ($($id:ident => $ty:ty,)*) => {
-        #[derive(Serialize)]
+        #[derive(Serialize, Deserialize)]
         pub enum Mbc {
             NullMbc(NullMbc),
             $(

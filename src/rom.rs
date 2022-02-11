@@ -4,6 +4,7 @@ use std::fmt::Display;
 
 use crate::util::to_si_bytesize;
 
+#[derive(Default)]
 pub struct Rom {
     pub title: String,
     pub manufacturer_code: [u8; 4],
@@ -29,6 +30,12 @@ pub enum CgbFlag {
     OnlyCgb,
 }
 
+impl Default for CgbFlag {
+    fn default() -> Self {
+        CgbFlag::NonCgb
+    }
+}
+
 impl Display for CgbFlag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -42,6 +49,12 @@ impl Display for CgbFlag {
 pub enum DestinationCode {
     Japanese,
     NonJapanese,
+}
+
+impl Default for DestinationCode {
+    fn default() -> Self {
+        DestinationCode::Japanese
+    }
 }
 
 impl Display for DestinationCode {

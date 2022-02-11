@@ -4,7 +4,7 @@ use serde_big_array::BigArray;
 
 use crate::{context, io::Io, mbc::Mbc};
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Bus {
     #[serde(with = "BigArray")]
     ram: [u8; 0x2000],
@@ -33,7 +33,7 @@ impl<
 {
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct Dma {
     source: u8,
     pos: u8,
