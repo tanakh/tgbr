@@ -32,7 +32,7 @@ impl Color {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct FrameBuffer {
     pub width: usize,
     pub height: usize,

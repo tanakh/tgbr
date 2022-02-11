@@ -118,7 +118,9 @@ fn main(
     let device: AudioQueue<i16> = audio_subsystem
         .open_queue(None, &desired_spec)
         .map_err(|e| anyhow!("{e}"))?;
-    device.queue(&vec![0; 2048 * 2]);
+    device
+        .queue_audio(&vec![0; 2048 * 2])
+        .map_err(|e| anyhow!("{e}"))?;
     device.resume();
 
     let key_config = KeyConfig::default();
@@ -137,8 +139,16 @@ fn main(
         let input = input_manager.input();
         let is_turbo = input_manager.hotkey(HotKey::Turbo).pressed();
 
+        const SS_FILE_NAME: &str = "save.state";
+
         if input_manager.hotkey(HotKey::StateSave).pushed() {
-            serde_cbor::to_writer(File::create("save.cbor")?, &gb)?;
+            let data = gb.save_state();
+            std::fs::write(SS_FILE_NAME, data)?;
+        }
+
+        if input_manager.hotkey(HotKey::StateLoad).pushed() {
+            let data = std::fs::read(SS_FILE_NAME)?;
+            gb.load_state(&data)?;
         }
 
         gb.set_input(&input);
@@ -205,14 +215,16 @@ fn main(
                 "invalid generated audio length: {}",
                 audio_buf.buf.len()
             );
-            device.queue(
-                &audio_buf
-                    .buf
-                    .iter()
-                    .map(|s| [s.right, s.left])
-                    .flatten()
-                    .collect::<Vec<_>>(),
-            );
+            device
+                .queue_audio(
+                    &audio_buf
+                        .buf
+                        .iter()
+                        .map(|s| [s.right, s.left])
+                        .flatten()
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|e| anyhow!("{e}"))?;
         }
 
         // FIXME

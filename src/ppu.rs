@@ -58,7 +58,9 @@ pub struct Ppu {
 
     dmg_palette: [Color; 4],
 
+    #[serde(with = "serde_bytes")]
     line_buffer: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     line_buffer_attr: Vec<u8>,
 
     #[serde(skip)]

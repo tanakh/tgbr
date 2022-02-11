@@ -18,12 +18,14 @@ use crate::{
 pub struct GameBoy {
     cpu: Cpu,
     model: Model,
+    #[serde(flatten)]
     ctx: Context,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Context {
     bus: Bus,
+    #[serde(flatten)]
     bus_context: BusContext,
 }
 
@@ -31,15 +33,19 @@ struct Context {
 struct BusContext {
     #[serde(skip)]
     rom: Rom,
+    rom_hash: [u8; 32],
     ppu: Ppu,
+    #[serde(flatten)]
     ppu_context: PpuContext,
 }
 
 #[derive(Serialize, Deserialize)]
 struct PpuContext {
     apu: Apu,
+    #[serde(with = "serde_bytes")]
     vram: Vec<u8>,
     vram_lock: bool,
+    #[serde(with = "serde_bytes")]
     oam: Vec<u8>,
     oam_lock: bool,
     interrupt_enable: u8,
@@ -48,6 +54,11 @@ struct PpuContext {
 
 impl GameBoy {
     pub fn new(rom: Rom, backup_ram: Option<Vec<u8>>, config: &Config) -> Result<Self> {
+        let rom_hash = {
+            use sha2::Digest;
+            sha2::Sha256::digest(&rom.data).into()
+        };
+
         let cpu = Cpu::new();
         let ppu = Ppu::new(&config.dmg_palette);
         let apu = Apu::new();
@@ -88,6 +99,7 @@ impl GameBoy {
                 bus,
                 bus_context: BusContext {
                     rom,
+                    rom_hash,
                     ppu,
                     ppu_context: PpuContext {
                         apu,
@@ -191,9 +203,27 @@ impl GameBoy {
         self.ctx.bus.io().set_link_cable(link_cable);
     }
 
-    // pub fn save_state() -> Value {
-    //     todo!()
-    // }
+    pub fn save_state(&self) -> Vec<u8> {
+        let mut ret = vec![];
+        ciborium::ser::into_writer(self, &mut ret).unwrap();
+        ret
+    }
+
+    pub fn load_state(&mut self, data: &[u8]) -> Result<()> {
+        // TODO: limitation: cannot restore connector
+
+        // Deserialize object
+        let mut gb: GameBoy = ciborium::de::from_reader(data)?;
+
+        // Restore unserialized fields
+        if self.ctx.bus_context.rom_hash != gb.ctx.bus_context.rom_hash {
+            bail!("ROM hash mismatch");
+        }
+        std::mem::swap(&mut self.ctx.bus_context.rom, &mut gb.ctx.bus_context.rom);
+
+        *self = gb;
+        Ok(())
+    }
 }
 
 impl context::Bus for Context {

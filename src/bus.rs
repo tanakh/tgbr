@@ -1,17 +1,16 @@
 use log::{trace, warn};
 use serde::{Deserialize, Serialize};
-use serde_big_array::BigArray;
 
 use crate::{context, io::Io, mbc::Mbc};
 
 #[derive(Serialize, Deserialize)]
 pub struct Bus {
-    #[serde(with = "BigArray")]
-    ram: [u8; 0x2000],
-    #[serde(with = "BigArray")]
-    hiram: [u8; 0x7F],
-    #[serde(with = "BigArray")]
-    boot_rom: [u8; 0x100],
+    #[serde(with = "serde_bytes")]
+    ram: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    hiram: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    boot_rom: Vec<u8>,
     map_boot_rom: bool,
     mbc: Mbc,
     io: Io,
@@ -43,15 +42,19 @@ struct Dma {
 
 impl Bus {
     pub fn new(mbc: Mbc, boot_rom: &Option<Vec<u8>>, io: Io) -> Self {
+        if let Some(boot_rom) = boot_rom {
+            assert_eq!(boot_rom.len(), 0x100, "Boot ROM must be 256 bytes");
+        }
+
         Self {
-            ram: [0; 0x2000],
-            hiram: [0; 0x7F],
+            ram: vec![0; 0x2000],
+            hiram: vec![0; 0x7F],
             boot_rom: boot_rom
                 .as_ref()
-                .map_or_else(|| [0; 0x100], |r| r.as_slice().try_into().unwrap()),
+                .map_or_else(|| vec![0; 0x100], |r| r.clone()),
             map_boot_rom: boot_rom.is_some(),
-            mbc: mbc,
-            io: io,
+            mbc,
+            io,
             dma: Dma::default(),
         }
     }

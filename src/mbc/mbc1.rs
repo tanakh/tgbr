@@ -5,6 +5,7 @@ use crate::{mbc::Context, rom::Rom, util::to_si_bytesize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Mbc1 {
+    #[serde(with = "serde_bytes")]
     ram: Vec<u8>,
     rom_bank: u8,
     ram_enable: bool,
