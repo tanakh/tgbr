@@ -1,32 +1,34 @@
+mod input;
+mod timer;
+
 use anyhow::{anyhow, bail, Result};
 use log::{info, log_enabled};
 use sdl2::{
     audio::{AudioQueue, AudioSpecDesired},
-    controller::{self, GameController},
     event::Event,
-    keyboard::{self, Keycode},
     pixels::{Color, PixelFormatEnum},
     rect::Rect,
-    EventPump, Sdl,
+    EventPump,
 };
 use std::{
-    collections::VecDeque,
     fs::{self, File},
     io,
     path::{Path, PathBuf},
     time::Duration,
 };
 
-use tgbr::{
-    interface::{Input, Pad},
-    Config, GameBoy, Rom,
-};
+use tgbr_core::{Config, GameBoy, Rom};
+
+use input::{HotKey, HotKeys, InputManager, KeyConfig};
+
+const SAVE_DIR: &str = "./save";
+const STATE_DIR: &str = "./state";
 
 const SCALING: u32 = 4;
 const FPS: f64 = 60.0;
 
-const DMG_PALETTE: [tgbr::Color; 4] = {
-    use tgbr::Color;
+const DMG_PALETTE: [tgbr_core::Color; 4] = {
+    use tgbr_core::Color;
     [
         // Color::new(155, 188, 15),
         // Color::new(139, 172, 15),
@@ -129,25 +131,23 @@ fn main(
 
     let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow!("{e}"))?;
 
-    let mut timer = Timer::new();
-    // let mut audio_filter = AudioFilter::new();
+    let mut timer = timer::Timer::new();
 
     let mut frames = 0;
+    let mut state_save_slot = 0;
 
     while process_events(&mut event_pump) {
         input_manager.update(&event_pump);
         let input = input_manager.input();
         let is_turbo = input_manager.hotkey(HotKey::Turbo).pressed();
 
-        const SS_FILE_NAME: &str = "save.state";
-
         if input_manager.hotkey(HotKey::StateSave).pushed() {
             let data = gb.save_state();
-            std::fs::write(SS_FILE_NAME, data)?;
+            save_state_data(&rom_file, state_save_slot, &data)?;
         }
 
         if input_manager.hotkey(HotKey::StateLoad).pushed() {
-            let data = std::fs::read(SS_FILE_NAME)?;
+            let data = load_state_data(&rom_file, state_save_slot)?;
             gb.load_state(&data)?;
         }
 
@@ -292,14 +292,32 @@ fn load_rom(file: &Path) -> Result<Rom> {
     }
 }
 
-const SAVE_DIR: &str = "./save";
+fn get_save_file_path(rom_file: &Path) -> Result<PathBuf> {
+    let sav_file = rom_file
+        .file_stem()
+        .ok_or_else(|| anyhow!("Invalid file name: {}", rom_file.display()))?;
+
+    Ok(Path::new(SAVE_DIR).join(sav_file).with_extension("sav"))
+}
+
+fn get_state_file_path(rom_file: &Path, slot: usize) -> Result<PathBuf> {
+    let state_file = rom_file
+        .file_stem()
+        .ok_or_else(|| anyhow!("Invalid file name: {}", rom_file.display()))?;
+    let state_file = format!("{}-{slot}", state_file.to_string_lossy());
+
+    let state_dir = Path::new(STATE_DIR);
+    if !state_dir.exists() {
+        fs::create_dir_all(state_dir)?;
+    } else if !state_dir.is_dir() {
+        bail!("`{}` is not a directory", state_dir.display());
+    }
+
+    Ok(state_dir.join(state_file).with_extension("state"))
+}
 
 fn load_backup_ram(file: &Path) -> Result<Option<Vec<u8>>> {
-    let sav_file = file
-        .file_stem()
-        .ok_or_else(|| anyhow!("Invalid file name: {}", file.display()))?;
-
-    let save_file_path = Path::new(SAVE_DIR).join(sav_file).with_extension("sav");
+    let save_file_path = get_save_file_path(file)?;
 
     Ok(if save_file_path.is_file() {
         info!("Loading backup RAM: `{}`", save_file_path.display());
@@ -309,19 +327,8 @@ fn load_backup_ram(file: &Path) -> Result<Option<Vec<u8>>> {
     })
 }
 
-fn save_backup_ram(file: &Path, ram: &[u8]) -> Result<()> {
-    let sav_file = file
-        .file_stem()
-        .ok_or_else(|| anyhow!("Invalid file name: {}", file.display()))?;
-
-    let save_dir = Path::new(SAVE_DIR);
-    if !save_dir.exists() {
-        fs::create_dir_all(save_dir)?;
-    } else if !save_dir.is_dir() {
-        bail!("`{}` is not a directory", save_dir.display());
-    }
-
-    let save_file_path = save_dir.join(sav_file).with_extension("sav");
+fn save_backup_ram(rom_file: &Path, ram: &[u8]) -> Result<()> {
+    let save_file_path = get_save_file_path(rom_file)?;
 
     if !save_file_path.exists() {
         info!("Creating backup RAM file: `{}`", save_file_path.display());
@@ -331,13 +338,27 @@ fn save_backup_ram(file: &Path, ram: &[u8]) -> Result<()> {
             save_file_path.display()
         );
     }
-    // Atomic write to save file
+    atomic_write_file(&save_file_path, ram)
+}
+
+fn atomic_write_file(file: &Path, data: &[u8]) -> Result<()> {
     use std::io::Write;
     let mut f = tempfile::NamedTempFile::new()?;
-    f.write_all(ram)?;
-    f.persist(save_file_path)?;
-
+    f.write_all(data)?;
+    f.persist(file)?;
     Ok(())
+}
+
+fn save_state_data(rom_file: &Path, slot: usize, data: &[u8]) -> Result<()> {
+    atomic_write_file(&get_state_file_path(rom_file, slot)?, data)?;
+    info!("Saved state to slot {slot}");
+    Ok(())
+}
+
+fn load_state_data(rom_file: &Path, slot: usize) -> Result<Vec<u8>> {
+    let ret = fs::read(get_state_file_path(rom_file, slot)?)?;
+    info!("Loaded state from slot {slot}");
+    Ok(ret)
 }
 
 fn print_rom_info(info: &[(&str, String)]) {
@@ -360,301 +381,11 @@ fn process_events(event_pump: &mut EventPump) -> bool {
         match event {
             Event::Quit { .. }
             | Event::KeyDown {
-                keycode: Some(Keycode::Escape),
+                keycode: Some(sdl2::keyboard::Keycode::Escape),
                 ..
             } => return false,
             _ => {}
         }
     }
     true
-}
-
-#[derive(Clone)]
-enum KeyAssign {
-    Keyboard {
-        scancode: keyboard::Scancode,
-    },
-    PadButton {
-        id: usize,
-        button: controller::Button,
-    },
-    PadAxis {
-        id: usize,
-        axis: controller::Axis,
-    },
-    All(Vec<KeyAssign>),
-    Any(Vec<KeyAssign>),
-}
-
-macro_rules! kbd {
-    ($scancode:ident) => {
-        KeyAssign::Keyboard {
-            scancode: sdl2::keyboard::Scancode::$scancode,
-        }
-    };
-}
-
-macro_rules! pad_button {
-    ($id:expr, $button:ident) => {
-        KeyAssign::PadButton {
-            id: $id,
-            button: controller::Button::$button,
-        }
-    };
-}
-
-macro_rules! pad_axis {
-    ($id:expr, $axis:ident) => {
-        KeyAssign::PadAxis {
-            id: $id,
-            axis: controller::Axis::$axis,
-        }
-    };
-}
-
-macro_rules! any {
-    ($($key:expr),* $(,)?) => {
-        KeyAssign::Any(vec![$($key),*])
-    };
-}
-
-macro_rules! all {
-    ($($key:expr),* $(,)?) => {
-        KeyAssign::All(vec![$($key),*])
-    };
-}
-
-#[derive(PartialEq, Eq, Clone, Copy)]
-enum PadButton {
-    Up,
-    Down,
-    Left,
-    Right,
-    A,
-    B,
-    Start,
-    Select,
-}
-
-struct KeyConfig(Vec<(PadButton, KeyAssign)>);
-
-impl Default for KeyConfig {
-    fn default() -> Self {
-        use PadButton::*;
-        Self(vec![
-            (Up, any![kbd!(Up), pad_button!(0, DPadUp)]),
-            (Down, any![kbd!(Down), pad_button!(0, DPadDown)]),
-            (Left, any![kbd!(Left), pad_button!(0, DPadLeft)]),
-            (Right, any![kbd!(Right), pad_button!(0, DPadRight)]),
-            (A, any![kbd!(Z), pad_button!(0, A)]),
-            (B, any![kbd!(X), pad_button!(0, X)]),
-            (Start, any![kbd!(Return), pad_button!(0, Start)]),
-            (Select, any![kbd!(RShift), pad_button!(0, Back)]),
-        ])
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Copy)]
-enum HotKey {
-    Turbo,
-    StateSave,
-    StateLoad,
-    FullScreen,
-}
-
-struct HotKeys(Vec<(HotKey, KeyAssign)>);
-
-impl Default for HotKeys {
-    fn default() -> Self {
-        use HotKey::*;
-        Self(vec![
-            (Turbo, any![kbd!(Tab), pad_axis!(0, TriggerLeft)]),
-            (StateSave, all![kbd!(LCtrl), kbd!(S)]),
-            (StateLoad, all![kbd!(LCtrl), kbd!(L)]),
-            (FullScreen, all![kbd!(RAlt), kbd!(Return)]),
-        ])
-    }
-}
-
-#[derive(PartialEq, Eq, Clone)]
-enum Key {
-    PadButton(PadButton),
-    HotKey(HotKey),
-}
-
-struct KeyState {
-    key: Key,
-    key_assign: KeyAssign,
-    pressed: bool,
-    prev_pressed: bool,
-}
-
-impl KeyState {
-    fn pressed(&self) -> bool {
-        self.pressed
-    }
-
-    fn pushed(&self) -> bool {
-        self.pressed && !self.prev_pressed
-    }
-
-    fn update(&mut self, pressed: bool) {
-        self.prev_pressed = self.pressed;
-        self.pressed = pressed;
-    }
-}
-
-struct InputManager {
-    controllers: Vec<GameController>,
-    key_states: Vec<KeyState>,
-}
-
-static NULL_KEY: KeyState = KeyState {
-    key: Key::PadButton(PadButton::Up),
-    key_assign: any![],
-    pressed: false,
-    prev_pressed: false,
-};
-
-impl InputManager {
-    fn new(sdl: &Sdl, key_config: &KeyConfig, hotkeys: &HotKeys) -> Result<Self> {
-        let gcs = sdl.game_controller().map_err(|e| anyhow!("{e}"))?;
-
-        let controllers = (0..(gcs.num_joysticks().map_err(|e| anyhow!("{e}"))?))
-            .map(|id| gcs.open(id))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let mut key_states = vec![];
-
-        for r in &key_config.0 {
-            key_states.push(KeyState {
-                key: Key::PadButton(r.0.clone()),
-                key_assign: r.1.clone(),
-                pressed: false,
-                prev_pressed: false,
-            });
-        }
-
-        for r in &hotkeys.0 {
-            key_states.push(KeyState {
-                key: Key::HotKey(r.0.clone()),
-                key_assign: r.1.clone(),
-                pressed: false,
-                prev_pressed: false,
-            });
-        }
-
-        Ok(Self {
-            controllers,
-            key_states,
-        })
-    }
-
-    fn update(&mut self, e: &EventPump) {
-        let kbstate = keyboard::KeyboardState::new(e);
-
-        // for i in 0..self.key_states.len() {}
-        for r in &mut self.key_states {
-            let pressed = check_pressed(&kbstate, &self.controllers, &r.key_assign);
-            r.update(pressed);
-        }
-    }
-
-    fn input(&self) -> Input {
-        use PadButton::*;
-        Input {
-            pad: Pad {
-                up: self.pad_button(Up).pressed(),
-                down: self.pad_button(Down).pressed(),
-                left: self.pad_button(Left).pressed(),
-                right: self.pad_button(Right).pressed(),
-                a: self.pad_button(A).pressed(),
-                b: self.pad_button(B).pressed(),
-                start: self.pad_button(Start).pressed(),
-                select: self.pad_button(Select).pressed(),
-            },
-        }
-    }
-
-    fn pad_button(&self, pad_button: PadButton) -> &KeyState {
-        self.key_states
-            .iter()
-            .find(|r| &r.key == &Key::PadButton(pad_button))
-            .unwrap_or(&NULL_KEY)
-    }
-
-    fn hotkey(&self, hotkey: HotKey) -> &KeyState {
-        self.key_states
-            .iter()
-            .find(|r| &r.key == &Key::HotKey(hotkey))
-            .unwrap_or(&NULL_KEY)
-    }
-}
-
-fn check_pressed(
-    kbstate: &keyboard::KeyboardState<'_>,
-    controllers: &[GameController],
-    key: &KeyAssign,
-) -> bool {
-    use KeyAssign::*;
-    match key {
-        Keyboard { scancode } => kbstate.is_scancode_pressed(*scancode),
-        PadButton { id, button } => controllers.get(*id).map_or(false, |r| r.button(*button)),
-        PadAxis { id, axis } => controllers
-            .get(*id)
-            .map_or(false, |r| dbg!(r.axis(*axis)) > 32767 / 2),
-        All(keys) => keys.iter().all(|k| check_pressed(kbstate, controllers, k)),
-        Any(keys) => keys.iter().any(|k| check_pressed(kbstate, controllers, k)),
-    }
-}
-
-use std::time::SystemTime;
-
-struct Timer {
-    hist: VecDeque<SystemTime>,
-    prev: SystemTime,
-}
-
-impl Timer {
-    fn new() -> Self {
-        Self {
-            hist: VecDeque::new(),
-            prev: SystemTime::now(),
-        }
-    }
-
-    fn wait_for_frame(&mut self, fps: f64) {
-        let span = 1.0 / fps;
-
-        let elapsed = self.prev.elapsed().unwrap().as_secs_f64();
-
-        if elapsed < span {
-            let wait = span - elapsed;
-            std::thread::sleep(Duration::from_secs_f64(wait));
-        }
-
-        self.prev = SystemTime::now();
-
-        self.hist.push_back(self.prev);
-        while self.hist.len() > 60 {
-            self.hist.pop_front();
-        }
-    }
-
-    fn fps(&self) -> f64 {
-        if self.hist.len() < 60 {
-            return 0.0;
-        }
-
-        let span = self.hist.len() - 1;
-        let dur = self
-            .hist
-            .back()
-            .unwrap()
-            .duration_since(*self.hist.front().unwrap())
-            .unwrap()
-            .as_secs_f64();
-
-        span as f64 / dur
-    }
 }

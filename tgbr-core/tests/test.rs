@@ -1,14 +1,14 @@
 use anyhow::{bail, Result};
 use std::{cell::RefCell, rc::Rc};
 
-use tgbr::{
+use tgbr_core::{
     config::{Config, Model},
     gameboy::GameBoy,
     interface::LinkCable,
     rom::Rom,
 };
 
-const DMG_BOOT_ROM: &[u8] = include_bytes!("../assets/sameboy-bootroms/dmg_boot.bin");
+const DMG_BOOT_ROM: &[u8] = include_bytes!("../../assets/sameboy-bootroms/dmg_boot.bin");
 
 type Rr<T> = Rc<RefCell<T>>;
 

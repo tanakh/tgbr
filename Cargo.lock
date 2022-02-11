@@ -854,8 +854,6 @@ dependencies = [
  "anyhow",
  "argopt",
  "base64",
- "bitvec",
- "bytesize",
  "ciborium",
  "env_logger",
  "log",
@@ -863,12 +861,25 @@ dependencies = [
  "sdl2",
  "serde",
  "serde-bytes-repr",
- "serde_bytes",
  "serde_json",
- "sha2",
  "tempfile",
+ "tgbr-core",
  "toml",
  "zip",
+]
+
+[[package]]
+name = "tgbr-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitvec",
+ "bytesize",
+ "ciborium",
+ "log",
+ "serde",
+ "serde_bytes",
+ "sha2",
 ]
 
 [[package]]
