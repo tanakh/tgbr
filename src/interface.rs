@@ -67,6 +67,7 @@ impl FrameBuffer {
     }
 }
 
+#[derive(Default)]
 pub struct AudioBuffer {
     pub buf: Vec<AudioSample>,
 }

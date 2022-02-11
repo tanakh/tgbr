@@ -1,15 +1,15 @@
 use bitvec::prelude::*;
 use log::trace;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::min;
 
 use crate::{
     consts::{AUDIO_SAMPLE_PER_FRAME, DOTS_PER_LINE, LINES_PER_FRAME},
     interface::{AudioBuffer, AudioSample},
-    util::{pack, ClockDivider, Ref},
+    util::{pack, ClockDivider},
 };
 
-#[derive(Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Apu {
     pulse: [Pulse; 2],
     wave: Wave,
@@ -22,11 +22,11 @@ pub struct Apu {
     frame_sequencer_step: u64,
     sampling_counter: u64,
 
-    #[serde(skip_serializing)]
-    audio_buffer: Ref<AudioBuffer>,
+    #[serde(skip)]
+    audio_buffer: AudioBuffer,
 }
 
-#[derive(Default, Debug, Serialize)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 struct ChannelCtrl {
     vin_enable: bool,
     volume: u8,
@@ -34,18 +34,12 @@ struct ChannelCtrl {
 }
 
 impl Apu {
-    pub fn new(audio_buffer: &Ref<AudioBuffer>) -> Self {
+    pub fn new() -> Self {
         Self {
             pulse: [Pulse::new(true), Pulse::new(false)],
-            wave: Default::default(),
-            noise: Default::default(),
-            channel_ctrl: Default::default(),
-            power_on: false,
             frame_sequencer_step: 7,
-            sampling_counter: 0,
-
             frame_sequencer_div: ClockDivider::with_period(8192),
-            audio_buffer: Ref::clone(audio_buffer),
+            ..Default::default()
         }
     }
 
@@ -76,6 +70,14 @@ impl Apu {
         self.pulse[1].length = ch2_len;
         self.wave.length = ch3_len;
         self.noise.length = ch4_len;
+    }
+
+    pub fn audio_buffer(&self) -> &AudioBuffer {
+        &self.audio_buffer
+    }
+
+    pub fn audio_buffer_mut(&mut self) -> &mut AudioBuffer {
+        &mut self.audio_buffer
     }
 
     pub fn tick(&mut self) {
@@ -113,7 +115,7 @@ impl Apu {
         self.sampling_counter += AUDIO_SAMPLE_PER_FRAME;
         if self.sampling_counter >= TICKS_PER_SECOND {
             self.sampling_counter -= TICKS_PER_SECOND;
-            self.audio_buffer.borrow_mut().buf.push(self.mix_output());
+            self.audio_buffer.buf.push(self.mix_output());
         }
     }
 
@@ -265,7 +267,7 @@ impl Apu {
     }
 }
 
-#[derive(Default, Debug, Serialize)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 struct Pulse {
     has_sweep_unit: bool,
     sweep_period: u8,
@@ -559,7 +561,7 @@ impl Pulse {
     }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct Wave {
     enable: bool,
     length: u16,      // Sound Length = (256-t1)*(1/256) seconds
@@ -697,7 +699,7 @@ impl Wave {
     }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct Noise {
     length: u8, // Sound Length = (64-t1)*(1/256) seconds
     initial_volume: u8,

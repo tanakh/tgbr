@@ -1,7 +1,6 @@
 use bitvec::prelude::*;
 use log::{debug, error, trace, warn};
 use serde::{Deserialize, Serialize};
-use serde_big_array::BigArray;
 
 use crate::{
     consts::{
@@ -25,7 +24,7 @@ const ATTR_NONE: u8 = 0;
 const ATTR_BG: u8 = 1;
 const ATTR_OBJ: u8 = 2;
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Ppu {
     ppu_enable: bool,                     // 0=off, 1=on
     window_tile_map_select: bool,         // 0=9800-9BFF, 1=9C00-9FFF

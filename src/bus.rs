@@ -18,8 +18,14 @@ pub struct Bus {
     dma: Dma,
 }
 
-pub trait Context: context::Vram + context::Oam {}
-impl<T: context::Vram + context::Oam> Context for T {}
+pub trait Context:
+    context::Vram + context::Oam + context::Ppu + context::Apu + context::InterruptFlag
+{
+}
+impl<T: context::Vram + context::Oam + context::Ppu + context::Apu + context::InterruptFlag> Context
+    for T
+{
+}
 
 #[derive(Default, Serialize)]
 struct Dma {
@@ -80,9 +86,9 @@ impl Bus {
             0xfea0..=0xfeff => todo!("Read from Unusable address: ${addr:04x}"),
             0xff46 => self.dma.source, // DMA
             0xff50 => !0,              // BANK
-            0xff00..=0xff7f => self.io.read(addr),
+            0xff00..=0xff7f => self.io.read(ctx, addr),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize],
-            0xffff => self.io.read(addr),
+            0xffff => self.io.read(ctx, addr),
         }
     }
 
@@ -108,9 +114,9 @@ impl Bus {
                 self.dma.delay = 2;
             }
             0xff50 => self.map_boot_rom = data & 1 == 0, // BANK
-            0xff00..=0xff7f => self.io.write(addr, data),
+            0xff00..=0xff7f => self.io.write(ctx, addr, data),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize] = data,
-            0xffff => self.io.write(addr, data),
+            0xffff => self.io.write(ctx, addr, data),
         };
     }
 

@@ -199,7 +199,7 @@ fn main(
         };
 
         if queue_audio {
-            let audio_buf = gb.audio_buffer().borrow();
+            let audio_buf = gb.audio_buffer();
             assert!(
                 (799..=801).contains(&audio_buf.buf.len()),
                 "invalid generated audio length: {}",

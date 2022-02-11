@@ -1,14 +1,15 @@
 use bitvec::prelude::*;
 use log::trace;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    consts::INT_SERIAL,
+    consts::INT_SERIAL_BIT,
+    context,
     interface::LinkCable,
     util::{pack, Ref},
 };
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SerialTransfer {
     buf: u8,
     recv_buf: Option<u8>,
@@ -16,14 +17,17 @@ pub struct SerialTransfer {
     use_internal_clock: bool,
     transfer_timer: u64,
     transfer_pos: usize,
-    #[serde(skip_serializing)]
-    interrupt_flag: Ref<u8>,
+    // #[serde(skip_serializing)]
+    // interrupt_flag: Ref<u8>,
     #[serde(skip)]
     link_cable: Option<Ref<dyn LinkCable>>,
 }
 
+pub trait Context: context::InterruptFlag {}
+impl<T: context::InterruptFlag> Context for T {}
+
 impl SerialTransfer {
-    pub fn new(interrupt_flag: &Ref<u8>) -> Self {
+    pub fn new() -> Self {
         Self {
             buf: 0,
             recv_buf: None,
@@ -31,7 +35,6 @@ impl SerialTransfer {
             use_internal_clock: false,
             transfer_timer: 0,
             transfer_pos: 0,
-            interrupt_flag: Ref::clone(interrupt_flag),
             link_cable: None,
         }
     }
@@ -40,7 +43,7 @@ impl SerialTransfer {
         self.link_cable = link_cable;
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, ctx: &mut impl Context) {
         if !self.transfer_progress {
             return;
         }
@@ -78,7 +81,7 @@ impl SerialTransfer {
             self.recv_buf = None;
             self.transfer_pos = 0;
             self.transfer_progress = false;
-            *self.interrupt_flag.borrow_mut() |= INT_SERIAL;
+            ctx.set_interrupt_flag_bit(INT_SERIAL_BIT);
         }
     }
 

@@ -3,15 +3,17 @@ use log::{trace, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    apu::Apu,
-    consts::{INT_JOYPAD, INT_TIMER},
+    consts::{INT_JOYPAD_BIT, INT_TIMER_BIT},
+    context,
     interface::{Input, LinkCable},
-    ppu::Ppu,
     serial::SerialTransfer,
     util::{pack, Ref},
 };
 
-#[derive(Serialize)]
+pub trait Context: context::InterruptFlag + context::Ppu + context::Apu {}
+impl<T: context::InterruptFlag + context::Ppu + context::Apu> Context for T {}
+
+#[derive(Serialize, Deserialize)]
 pub struct Io {
     select_action_buttons: bool,
     select_direction_buttons: bool,
@@ -24,26 +26,13 @@ pub struct Io {
     prev_timer_clock: bool,
     timer_reload: bool,
     timer_reloaded: bool,
-    #[serde(skip_serializing)]
-    interrupt_flag: Ref<u8>,
-    #[serde(skip_serializing)]
-    interrupt_enable: Ref<u8>,
 
-    #[serde(skip_serializing)]
-    ppu: Ref<Ppu>,
-    #[serde(skip_serializing)]
-    apu: Ref<Apu>,
     serial: SerialTransfer,
     input: Input,
 }
 
 impl Io {
-    pub fn new(
-        ppu: &Ref<Ppu>,
-        apu: &Ref<Apu>,
-        interrupt_enable: &Ref<u8>,
-        interrupt_flag: &Ref<u8>,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
             select_action_buttons: false,
             select_direction_buttons: false,
@@ -55,16 +44,12 @@ impl Io {
             prev_timer_clock: false,
             timer_reload: false,
             timer_reloaded: false,
-            interrupt_enable: Ref::clone(interrupt_enable),
-            interrupt_flag: Ref::clone(interrupt_flag),
-            ppu: Ref::clone(ppu),
-            apu: Ref::clone(apu),
-            serial: SerialTransfer::new(interrupt_flag),
+            serial: SerialTransfer::new(),
             input: Input::default(),
         }
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, ctx: &mut impl Context) {
         self.divider = self.divider.wrapping_add(4);
 
         self.timer_reloaded = false;
@@ -72,7 +57,7 @@ impl Io {
         if self.timer_reload {
             log::trace!("Timer reload: ${:02X}", self.timer_modulo);
             self.timer_counter = self.timer_modulo;
-            *self.interrupt_flag.borrow_mut() |= INT_TIMER;
+            ctx.set_interrupt_flag_bit(INT_TIMER_BIT);
             self.timer_reload = false;
             self.timer_reloaded = true;
         }
@@ -94,14 +79,14 @@ impl Io {
         self.prev_timer_clock = timer_clock;
     }
 
-    pub fn set_input(&mut self, input: &Input) {
+    pub fn set_input(&mut self, ctx: &mut impl Context, input: &Input) {
         let prev_lines = self.keypad_input_lines();
         self.input = input.clone();
         let cur_lines = self.keypad_input_lines();
 
         for i in 0..4 {
             if prev_lines[i] && !cur_lines[i] {
-                *self.interrupt_flag.borrow_mut() |= INT_JOYPAD;
+                ctx.set_interrupt_flag_bit(INT_JOYPAD_BIT);
             }
         }
     }
@@ -132,7 +117,7 @@ impl Io {
         lines
     }
 
-    pub fn read(&mut self, addr: u16) -> u8 {
+    pub fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
         let ret = match addr & 0xff {
             // P1: Joypad (R/W)
             0x00 => {
@@ -166,18 +151,17 @@ impl Io {
             // IF: Interrupt flag (R/W)
             0x0f => pack! {
                 5..=7 => !0,
-                0..=4 => *self.interrupt_flag.borrow(),
+                0..=4 => ctx.interrupt_flag(),
             },
             // IE: Interrupt enable (R/W)
             0xff => pack! {
-                // 5..=7 => !0,
-                0..=7 => *self.interrupt_enable.borrow(),
+                0..=7 => ctx.interrupt_enable(),
             },
 
             // APU Registers
-            0x10..=0x3F => self.apu.borrow_mut().read(addr),
+            0x10..=0x3F => ctx.read_apu(addr),
             // PPU Registers
-            0x40..=0x4B => self.ppu.borrow_mut().read(addr),
+            0x40..=0x4B => ctx.read_ppu(addr),
 
             _ => {
                 warn!("Unknown I/O Read: {:04X}", addr);
@@ -189,7 +173,7 @@ impl Io {
         ret
     }
 
-    pub fn write(&mut self, addr: u16, data: u8) {
+    pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
         trace!("I/O write: ${addr:04X} = ${data:02X}");
 
         match addr & 0xff {
@@ -231,17 +215,17 @@ impl Io {
                 self.input_clock_select = v[0..=1].load();
             }
             // IF: Interrupt flag (R/W)
-            0x0f => *self.interrupt_flag.borrow_mut() = data & 0x1f,
+            0x0f => ctx.set_interrupt_flag(data & 0x1f),
             // IE: Interrupt enable (R/W)
             0xff => {
                 trace!("IE = {data:02X}");
-                *self.interrupt_enable.borrow_mut() = data
+                ctx.set_interrupt_enable(data)
             }
 
             // APU Registers
-            0x10..=0x3F => self.apu.borrow_mut().write(addr, data),
+            0x10..=0x3F => ctx.write_apu(addr, data),
             // PPU Registers
-            0x40..=0x4B => self.ppu.borrow_mut().write(addr, data),
+            0x40..=0x4B => ctx.write_ppu(addr, data),
 
             _ => {
                 warn!("Write to ${:04X} = ${:02X}", addr, data);

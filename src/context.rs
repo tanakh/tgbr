@@ -33,3 +33,13 @@ pub trait Oam {
     fn write_oam(&mut self, addr: u8, data: u8, force: bool);
     fn lock_oam(&mut self, lock: bool);
 }
+
+pub trait Ppu {
+    fn read_ppu(&mut self, addr: u16) -> u8;
+    fn write_ppu(&mut self, addr: u16, data: u8);
+}
+
+pub trait Apu {
+    fn read_apu(&mut self, addr: u16) -> u8;
+    fn write_apu(&mut self, addr: u16, data: u8);
+}
