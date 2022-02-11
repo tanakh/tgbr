@@ -11,8 +11,8 @@ use crate::{
     util::pack,
 };
 
-pub trait Context: context::Vram + context::Oam + context::InterruptFlag {}
-impl<T: context::Vram + context::Oam + context::InterruptFlag> Context for T {}
+pub trait Context: context::Vram + context::InterruptFlag {}
+impl<T: context::Vram + context::InterruptFlag> Context for T {}
 
 const MODE_HBLANK: u8 = 0;
 const MODE_VBLANK: u8 = 1;
@@ -55,6 +55,8 @@ pub struct Ppu {
     frame: u64,
     window_rendering_counter: u8,
 
+    #[serde(with = "serde_bytes")]
+    oam: Vec<u8>,
     dmg_palette: [Color; 4],
 
     #[serde(with = "serde_bytes")]
@@ -69,6 +71,7 @@ pub struct Ppu {
 impl Ppu {
     pub fn new(dmg_palette: &[Color; 4]) -> Self {
         Self {
+            oam: vec![0; 0xA0],
             line_buffer: vec![0; SCREEN_WIDTH as usize],
             line_buffer_attr: vec![0; SCREEN_WIDTH as usize],
             dmg_palette: dmg_palette.clone(),
@@ -131,7 +134,6 @@ impl Ppu {
             if mode == MODE_TRANSFER {
                 self.render_line(ctx);
             }
-            ctx.lock_oam(matches!(mode, MODE_OAM_SEARCH | MODE_TRANSFER));
         }
         self.mode = mode;
     }
@@ -297,6 +299,24 @@ impl Ppu {
             _ => warn!("Unusable write to I/O: ${addr:04X} = ${data:02X}"),
         }
     }
+
+    pub fn read_oam(&self, addr: u8) -> u8 {
+        if !self.oam_locked() {
+            self.oam[addr as usize]
+        } else {
+            !0
+        }
+    }
+
+    pub fn write_oam(&mut self, addr: u8, data: u8) {
+        if !self.oam_locked() {
+            self.oam[addr as usize] = data
+        }
+    }
+
+    fn oam_locked(&self) -> bool {
+        self.mode == MODE_OAM_SEARCH || self.mode == MODE_TRANSFER
+    }
 }
 
 impl Ppu {
@@ -388,9 +408,9 @@ impl Ppu {
         let mut render_objs = [(0xff, 0xff); 10];
 
         for i in 0..40 {
-            let ofs = i * 4;
-            let y = ctx.read_oam(ofs, true);
-            let x = ctx.read_oam(ofs + 1, true);
+            let r = &self.oam[i * 4..(i + 1) * 4];
+            let y = r[0];
+            let x = r[1];
             if (y..y + obj_size).contains(&(self.ly + 16)) {
                 render_objs[obj_count] = (x, i);
                 obj_count += 1;
@@ -407,14 +427,11 @@ impl Ppu {
 
         for i in 0..obj_count {
             let i = render_objs[i].1;
-            let ofs = (i * 4) as u8;
-
-            let y = ctx.read_oam(ofs, true);
-            let x = ctx.read_oam(ofs + 1, true);
-            let tile_index = ctx.read_oam(ofs + 2, true);
-
-            let attr = ctx.read_oam(ofs + 3, true);
-            let v = attr.view_bits::<Lsb0>();
+            let r = &self.oam[i * 4..(i + 1) * 4];
+            let y = r[0];
+            let x = r[1];
+            let tile_index = r[2];
+            let v = r[3].view_bits::<Lsb0>();
             let bg_and_window_over_obj = v[7];
             let y_flip = v[6];
             let x_flip = v[5];

@@ -18,17 +18,11 @@ pub struct Bus {
 }
 
 pub trait Context:
-    context::Rom + context::Vram + context::Oam + context::Ppu + context::Apu + context::InterruptFlag
+    context::Rom + context::Vram + context::Ppu + context::Apu + context::InterruptFlag
 {
 }
-impl<
-        T: context::Rom
-            + context::Vram
-            + context::Oam
-            + context::Ppu
-            + context::Apu
-            + context::InterruptFlag,
-    > Context for T
+impl<T: context::Rom + context::Vram + context::Ppu + context::Apu + context::InterruptFlag> Context
+    for T
 {
 }
 
@@ -87,7 +81,7 @@ impl Bus {
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize],
             0xfe00..=0xfe9f => {
                 if !self.dma.enabled {
-                    ctx.read_oam((addr & 0xff) as u8, false)
+                    ctx.ppu().read_oam((addr & 0xff) as u8)
                 } else {
                     !0
                 }
@@ -110,7 +104,7 @@ impl Bus {
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize] = data,
             0xfe00..=0xfe9f => {
                 if !self.dma.enabled {
-                    ctx.write_oam((addr & 0xff) as u8, data, false)
+                    ctx.ppu_mut().write_oam((addr & 0xff) as u8, data)
                 }
             }
             0xfea0..=0xfeff => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
@@ -159,7 +153,7 @@ impl Bus {
             self.dma.pos
         );
         let data = self.read_(ctx, (self.dma.source as u16) << 8 | self.dma.pos as u16);
-        ctx.write_oam(self.dma.pos, data, true);
+        ctx.ppu_mut().write_oam(self.dma.pos, data);
         self.dma.pos += 1;
         if self.dma.pos == 0xA0 {
             self.dma.enabled = false;

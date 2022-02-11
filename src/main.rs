@@ -2,7 +2,7 @@ mod input;
 mod timer;
 
 use anyhow::{anyhow, bail, Result};
-use log::{info, log_enabled};
+use log::{error, info, log_enabled};
 use sdl2::{
     audio::{AudioQueue, AudioSpecDesired},
     event::Event,
@@ -148,7 +148,10 @@ fn main(
 
         if input_manager.hotkey(HotKey::StateLoad).pushed() {
             let data = load_state_data(&rom_file, state_save_slot)?;
-            gb.load_state(&data)?;
+            let res = gb.load_state(&data);
+            if let Err(e) = res {
+                error!("Failed to load state: {}", e);
+            }
         }
 
         gb.set_input(&input);
