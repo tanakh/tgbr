@@ -1,3 +1,5 @@
+use crate::rom;
+
 pub trait Bus {
     fn tick(&mut self);
     fn read(&mut self, addr: u16) -> u8;
@@ -42,4 +44,8 @@ pub trait Ppu {
 pub trait Apu {
     fn read_apu(&mut self, addr: u16) -> u8;
     fn write_apu(&mut self, addr: u16, data: u8);
+}
+
+pub trait Rom {
+    fn rom(&self) -> &rom::Rom;
 }

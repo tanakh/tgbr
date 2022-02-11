@@ -19,11 +19,17 @@ pub struct Bus {
 }
 
 pub trait Context:
-    context::Vram + context::Oam + context::Ppu + context::Apu + context::InterruptFlag
+    context::Rom + context::Vram + context::Oam + context::Ppu + context::Apu + context::InterruptFlag
 {
 }
-impl<T: context::Vram + context::Oam + context::Ppu + context::Apu + context::InterruptFlag> Context
-    for T
+impl<
+        T: context::Rom
+            + context::Vram
+            + context::Oam
+            + context::Ppu
+            + context::Apu
+            + context::InterruptFlag,
+    > Context for T
 {
 }
 
@@ -69,12 +75,12 @@ impl Bus {
                 if self.map_boot_rom {
                     self.boot_rom[addr as usize]
                 } else {
-                    self.mbc.read(addr)
+                    self.mbc.read(ctx, addr)
                 }
             }
-            0x0100..=0x7fff => self.mbc.read(addr),
+            0x0100..=0x7fff => self.mbc.read(ctx, addr),
             0x8000..=0x9fff => ctx.read_vram(addr & 0x1fff, false),
-            0xa000..=0xbfff => self.mbc.read(addr),
+            0xa000..=0xbfff => self.mbc.read(ctx, addr),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize],
             0xfe00..=0xfe9f => {
                 if !self.dma.enabled {
@@ -95,9 +101,9 @@ impl Bus {
     pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
         trace!("--> Write: ${addr:04X} = ${data:02X}");
         match addr {
-            0x0000..=0x7fff => self.mbc.write(addr, data),
+            0x0000..=0x7fff => self.mbc.write(ctx, addr, data),
             0x8000..=0x9fff => ctx.write_vram(addr & 0x1fff, data, false),
-            0xa000..=0xbfff => self.mbc.write(addr, data),
+            0xa000..=0xbfff => self.mbc.write(ctx, addr, data),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize] = data,
             0xfe00..=0xfe9f => {
                 if !self.dma.enabled {

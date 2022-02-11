@@ -2,12 +2,7 @@ use bitvec::prelude::*;
 use log::trace;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    consts::INT_SERIAL_BIT,
-    context,
-    interface::LinkCable,
-    util::{pack, Ref},
-};
+use crate::{consts::INT_SERIAL_BIT, context, interface::LinkCable, util::pack};
 
 #[derive(Serialize, Deserialize)]
 pub struct SerialTransfer {
@@ -17,10 +12,8 @@ pub struct SerialTransfer {
     use_internal_clock: bool,
     transfer_timer: u64,
     transfer_pos: usize,
-    // #[serde(skip_serializing)]
-    // interrupt_flag: Ref<u8>,
     #[serde(skip)]
-    link_cable: Option<Ref<dyn LinkCable>>,
+    link_cable: Option<Box<dyn LinkCable>>,
 }
 
 pub trait Context: context::InterruptFlag {}
@@ -39,7 +32,7 @@ impl SerialTransfer {
         }
     }
 
-    pub fn set_link_cable(&mut self, link_cable: Option<Ref<dyn LinkCable>>) {
+    pub fn set_link_cable(&mut self, link_cable: Option<Box<dyn LinkCable>>) {
         self.link_cable = link_cable;
     }
 
@@ -50,10 +43,9 @@ impl SerialTransfer {
 
         // Check incomming data
         if self.recv_buf.is_none() {
-            self.recv_buf = self
-                .link_cable
-                .as_ref()
-                .and_then(|link_cable| link_cable.borrow_mut().try_recv());
+            if let Some(r) = &mut self.link_cable {
+                self.recv_buf = r.try_recv();
+            }
         }
 
         let mut done = false;
@@ -110,8 +102,8 @@ impl SerialTransfer {
         let v = data.view_bits::<Lsb0>();
         self.use_internal_clock = v[0];
         if v[7] {
-            if let Some(link_cable) = &self.link_cable {
-                link_cable.borrow_mut().send(self.buf);
+            if let Some(link_cable) = &mut self.link_cable {
+                link_cable.send(self.buf);
             }
             self.transfer_progress = true;
             self.transfer_timer = 0;

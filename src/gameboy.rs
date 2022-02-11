@@ -20,9 +20,6 @@ pub struct GameBoy {
     cpu: Cpu,
     ctx: Context,
     model: Model,
-    #[serde(skip)]
-    rom: Ref<Rom>,
-
     // FIXME: Remove this
     #[serde(skip)]
     frame_buffer: FrameBuffer,
@@ -36,6 +33,8 @@ struct Context {
 
 #[derive(Serialize)]
 struct BusContext {
+    #[serde(skip_serializing)]
+    rom: Rom,
     ppu: Ref<Ppu>,
     ppu_context: PpuContext,
 }
@@ -43,26 +42,20 @@ struct BusContext {
 #[derive(Serialize)]
 struct PpuContext {
     apu: Apu,
-    vram: Ref<Vec<u8>>,
-    vram_lock: Ref<bool>,
-    oam: Ref<Vec<u8>>,
-    oam_lock: Ref<bool>,
-    interrupt_enable: Ref<u8>,
-    interrupt_flag: Ref<u8>,
+    vram: Vec<u8>,
+    vram_lock: bool,
+    oam: Vec<u8>,
+    oam_lock: bool,
+    interrupt_enable: u8,
+    interrupt_flag: u8,
 }
 
 impl GameBoy {
     pub fn new(rom: Rom, backup_ram: Option<Vec<u8>>, config: &Config) -> Result<Self> {
-        let rom = Ref::new(rom);
         let mbc = create_mbc(&rom, backup_ram);
 
-        let interrupt_enable = Ref::new(0x00);
-        let interrupt_flag = Ref::new(0x00);
-
-        let vram = Ref::new(vec![0; 0x2000]);
-        let vram_lock = Ref::new(false);
-        let oam = Ref::new(vec![0; 0xA0]);
-        let oam_lock = Ref::new(false);
+        let vram = vec![0; 0x2000];
+        let oam = vec![0; 0xA0];
 
         let ppu = Ref::new(Ppu::new(&config.dmg_palette));
         let apu = Apu::new();
@@ -72,7 +65,7 @@ impl GameBoy {
         let cpu = Cpu::new();
 
         // Set up the contents of registers after internal ROM execution
-        let model = match rom.borrow().cgb_flag {
+        let model = match rom.cgb_flag {
             CgbFlag::NonCgb => {
                 if config.model == Model::Auto {
                     Model::Dmg
@@ -98,19 +91,19 @@ impl GameBoy {
 
         let mut ret = Self {
             cpu,
-            rom,
             ctx: Context {
                 bus,
                 bus_context: BusContext {
+                    rom,
                     ppu,
                     ppu_context: PpuContext {
                         apu,
                         vram,
-                        vram_lock,
+                        vram_lock: false,
                         oam,
-                        oam_lock,
-                        interrupt_enable,
-                        interrupt_flag,
+                        oam_lock: false,
+                        interrupt_enable: 0,
+                        interrupt_flag: 0,
                     },
                 },
             },
@@ -174,9 +167,9 @@ impl GameBoy {
         }
     }
 
-    pub fn rom(&self) -> &Ref<Rom> {
-        &self.rom
-    }
+    // pub fn rom(&self) -> &Ref<Rom> {
+    //     &self.rom
+    // }
 
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
         self.ctx
@@ -204,15 +197,15 @@ impl GameBoy {
     }
 
     pub fn backup_ram(&mut self) -> Option<Vec<u8>> {
-        self.ctx.bus.mbc().backup_ram().map(|r| r.to_owned())
+        self.ctx
+            .bus
+            .mbc()
+            .backup_ram(&mut self.ctx.bus_context)
+            .map(|r| r.to_owned())
     }
 
     pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + 'static>) {
-        // FIXME: How to do this simpler?
-        fn wrap_link_cable(link_cable: impl LinkCable + 'static) -> Ref<dyn LinkCable> {
-            Ref(std::rc::Rc::new(std::cell::RefCell::new(link_cable)))
-        }
-        let link_cable = link_cable.map(wrap_link_cable);
+        let link_cable = link_cable.map(|r| Box::new(r) as Box<dyn LinkCable>);
         self.ctx.bus.io().set_link_cable(link_cable);
     }
 
@@ -245,6 +238,12 @@ impl context::Bus for Context {
 
     fn write(&mut self, addr: u16, data: u8) {
         self.bus.write(&mut self.bus_context, addr, data)
+    }
+}
+
+impl context::Rom for BusContext {
+    fn rom(&self) -> &Rom {
+        &self.rom
     }
 }
 
@@ -286,19 +285,19 @@ impl context::InterruptFlag for BusContext {
 
 impl context::InterruptFlag for PpuContext {
     fn interrupt_enable(&mut self) -> u8 {
-        *self.interrupt_enable.borrow()
+        self.interrupt_enable
     }
 
     fn set_interrupt_enable(&mut self, data: u8) {
-        *self.interrupt_enable.borrow_mut() = data;
+        self.interrupt_enable = data;
     }
 
     fn interrupt_flag(&mut self) -> u8 {
-        *self.interrupt_flag.borrow()
+        self.interrupt_flag
     }
 
     fn set_interrupt_flag(&mut self, data: u8) {
-        *self.interrupt_flag.borrow_mut() = data;
+        self.interrupt_flag = data;
     }
 }
 
@@ -318,21 +317,21 @@ impl context::Vram for BusContext {
 
 impl context::Vram for PpuContext {
     fn read_vram(&self, addr: u16, force: bool) -> u8 {
-        if force || !*self.vram_lock.borrow() {
-            self.vram.borrow()[addr as usize]
+        if force || !self.vram_lock {
+            self.vram[addr as usize]
         } else {
             !0
         }
     }
 
     fn write_vram(&mut self, addr: u16, data: u8, force: bool) {
-        if force || !*self.vram_lock.borrow() {
-            self.vram.borrow_mut()[addr as usize] = data;
+        if force || !self.vram_lock {
+            self.vram[addr as usize] = data;
         }
     }
 
     fn lock_vram(&mut self, lock: bool) {
-        *self.vram_lock.borrow_mut() = lock;
+        self.vram_lock = lock;
     }
 }
 
@@ -352,21 +351,21 @@ impl context::Oam for BusContext {
 
 impl context::Oam for PpuContext {
     fn read_oam(&self, addr: u8, force: bool) -> u8 {
-        if force || !*self.oam_lock.borrow() {
-            self.oam.borrow()[addr as usize]
+        if force || !self.oam_lock {
+            self.oam[addr as usize]
         } else {
             !0
         }
     }
 
     fn write_oam(&mut self, addr: u8, data: u8, force: bool) {
-        if force || !*self.oam_lock.borrow() {
-            self.oam.borrow_mut()[addr as usize] = data;
+        if force || !self.oam_lock {
+            self.oam[addr as usize] = data;
         }
     }
 
     fn lock_oam(&mut self, lock: bool) {
-        *self.oam_lock.borrow_mut() = lock;
+        self.oam_lock = lock;
     }
 }
 

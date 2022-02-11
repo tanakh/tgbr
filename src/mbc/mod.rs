@@ -1,47 +1,41 @@
 mod mbc1;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
+    context,
     rom::{self, Rom},
-    util::Ref,
 };
 
-#[derive(Serialize)]
-pub struct NullMbc {
-    #[serde(skip)]
-    rom: Ref<Rom>,
-}
+pub trait Context: context::Rom {}
+impl<T: context::Rom> Context for T {}
+
+#[derive(Serialize, Deserialize)]
+pub struct NullMbc {}
 
 impl NullMbc {
-    pub fn new(rom: &Ref<Rom>, _backup_ram: Option<Vec<u8>>) -> Self {
+    pub fn new(rom: &Rom, _backup_ram: Option<Vec<u8>>) -> Self {
         assert_eq!(
-            rom.borrow().rom_size,
+            rom.rom_size,
             32 * 1024,
             "ROM only cartridge should be 32KiB"
         );
-        assert_eq!(
-            rom.borrow().ram_size,
-            0,
-            "Currently ROM+RAM cartridge not supported"
-        );
+        assert_eq!(rom.ram_size, 0, "Currently ROM+RAM cartridge not supported");
 
-        Self {
-            rom: Ref::clone(rom),
-        }
+        Self {}
     }
 
-    pub fn read(&mut self, addr: u16) -> u8 {
+    pub fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
         match addr {
-            0x0000..=0x3fff => self.rom.borrow().data[addr as usize],
-            0x4000..=0x7fff => self.rom.borrow().data[addr as usize],
+            0x0000..=0x3fff => ctx.rom().data[addr as usize],
+            0x4000..=0x7fff => ctx.rom().data[addr as usize],
             _ => unreachable!("{:04X}", addr),
         }
     }
 
-    pub fn write(&mut self, _addr: u16, _data: u8) {}
+    pub fn write(&mut self, ctx: &mut impl Context, _addr: u16, _data: u8) {}
 
-    pub fn backup_ram(&self) -> Option<&[u8]> {
+    pub fn backup_ram(&self, ctx: &mut impl Context) -> Option<&[u8]> {
         None
     }
 }
@@ -57,36 +51,36 @@ macro_rules! def_mbc {
         }
 
         impl Mbc {
-            pub fn read(&mut self, addr: u16) -> u8 {
+            pub fn read(&mut self,  ctx: &mut impl Context, addr: u16) -> u8 {
                 match self {
-                    Mbc::NullMbc(mbc) => mbc.read(addr),
+                    Mbc::NullMbc(mbc) => mbc.read(ctx, addr),
                     $(
-                        Mbc::$id(mbc) => mbc.read(addr),
+                        Mbc::$id(mbc) => mbc.read(ctx, addr),
                     )*
                 }
             }
 
-            pub fn write(&mut self, addr: u16, data: u8) {
+            pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
                 match self {
-                    Mbc::NullMbc(mbc) => mbc.write(addr, data),
+                    Mbc::NullMbc(mbc) => mbc.write(ctx, addr, data),
                     $(
-                        Mbc::$id(mbc) => mbc.write(addr, data),
+                        Mbc::$id(mbc) => mbc.write(ctx, addr, data),
                     )*
                 }
             }
 
-            pub fn backup_ram(&self) -> Option<&[u8]> {
+            pub fn backup_ram(&self, ctx: &mut impl Context) -> Option<&[u8]> {
                 match self {
-                    Mbc::NullMbc(_) => None,
+                    Mbc::NullMbc(mbc) => mbc.backup_ram(ctx),
                     $(
-                        Mbc::$id(mbc) => mbc.backup_ram(),
+                        Mbc::$id(mbc) => mbc.backup_ram(ctx),
                     )*
                 }
             }
         }
 
-        pub fn create_mbc(rom: &Ref<Rom>, backup_ram: Option<Vec<u8>>) -> Mbc {
-            let cart_type = rom.borrow().cartridge_type.clone();
+        pub fn create_mbc(rom: &Rom, backup_ram: Option<Vec<u8>>) -> Mbc {
+            let cart_type = rom.cartridge_type.clone();
             match cart_type.mbc {
                 None => Mbc::NullMbc(NullMbc::new(rom, backup_ram)),
                 $(

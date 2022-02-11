@@ -7,7 +7,7 @@ use crate::{
     context,
     interface::{Input, LinkCable},
     serial::SerialTransfer,
-    util::{pack, Ref},
+    util::pack,
 };
 
 pub trait Context: context::InterruptFlag + context::Ppu + context::Apu {}
@@ -95,7 +95,7 @@ impl Io {
         &mut self.serial
     }
 
-    pub fn set_link_cable(&mut self, link_cable: Option<Ref<dyn LinkCable>>) {
+    pub fn set_link_cable(&mut self, link_cable: Option<Box<dyn LinkCable>>) {
         self.serial.set_link_cable(link_cable);
     }
 
