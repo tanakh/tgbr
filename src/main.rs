@@ -121,82 +121,102 @@ fn main(
     device.queue(&vec![0; 2048 * 2]);
     device.resume();
 
-    let input_manager = InputManager::new(&sdl_context, KeyConfig::default())?;
+    let key_config = KeyConfig::default();
+    let hotkeys = HotKeys::default();
+    let mut input_manager = InputManager::new(&sdl_context, &key_config, &hotkeys)?;
 
     let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow!("{e}"))?;
 
     let mut timer = Timer::new();
     // let mut audio_filter = AudioFilter::new();
 
+    let mut frames = 0;
+
     while process_events(&mut event_pump) {
-        let input = input_manager.get_input(&event_pump);
+        input_manager.update(&event_pump);
+        let input = input_manager.input();
+        let is_turbo = input_manager.hotkey(HotKey::Turbo).pressed();
+
+        if input_manager.hotkey(HotKey::StateSave).pushed() {
+            serde_cbor::to_writer(File::create("save.cbor")?, &gb)?;
+        }
 
         gb.set_input(&input);
         gb.exec_frame();
 
-        surface.with_lock_mut(|r| {
-            let buf = gb.frame_buffer().borrow();
+        frames += 1;
 
-            for y in 0..height {
-                for x in 0..width {
-                    let ix = y * width + x;
-                    let p = buf.get(x, y);
-                    r[ix * 3 + 0] = p.r;
-                    r[ix * 3 + 1] = p.g;
-                    r[ix * 3 + 2] = p.b;
+        if !is_turbo || frames % 5 == 0 {
+            surface.with_lock_mut(|r| {
+                let buf = gb.frame_buffer().borrow();
+
+                for y in 0..height {
+                    for x in 0..width {
+                        let ix = y * width + x;
+                        let p = buf.get(x, y);
+                        r[ix * 3 + 0] = p.r;
+                        r[ix * 3 + 1] = p.g;
+                        r[ix * 3 + 2] = p.b;
+                    }
                 }
-            }
-        });
+            });
 
-        let texture = surface.as_texture(&texture_creator)?;
-        canvas
-            .copy(&texture, None, None)
-            .map_err(|e| anyhow!("{e}"))?;
-
-        {
-            let fps_tex = font
-                .render(&format!("{:.02}", timer.fps()))
-                .blended(Color::RED)?
-                .as_texture(&texture_creator)?;
-
-            let (w, h) = {
-                let q = fps_tex.query();
-                (q.width, q.height)
-            };
-
+            let texture = surface.as_texture(&texture_creator)?;
             canvas
-                .copy(
-                    &fps_tex,
-                    None,
-                    Rect::new(screen_width as i32 - w as i32, 0, w, h),
-                )
+                .copy(&texture, None, None)
                 .map_err(|e| anyhow!("{e}"))?;
+
+            {
+                let fps_tex = font
+                    .render(&format!("{:.02}", timer.fps()))
+                    .blended(Color::RED)?
+                    .as_texture(&texture_creator)?;
+
+                let (w, h) = {
+                    let q = fps_tex.query();
+                    (q.width, q.height)
+                };
+
+                canvas
+                    .copy(
+                        &fps_tex,
+                        None,
+                        Rect::new(screen_width as i32 - w as i32, 0, w, h),
+                    )
+                    .map_err(|e| anyhow!("{e}"))?;
+            }
+
+            canvas.present();
         }
 
-        canvas.present();
+        let queue_audio = if is_turbo {
+            device.size() < 2048 * 2 * 2
+        } else {
+            while device.size() > 2048 * 2 * 2 {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            true
+        };
 
-        let audio_buf = gb.audio_buffer().borrow();
-        assert!(
-            (799..=801).contains(&audio_buf.buf.len()),
-            "invalid generated audio length: {}",
-            audio_buf.buf.len()
-        );
-
-        while device.size() > 2048 * 2 * 2 {
-            std::thread::sleep(Duration::from_millis(1));
+        if queue_audio {
+            let audio_buf = gb.audio_buffer().borrow();
+            assert!(
+                (799..=801).contains(&audio_buf.buf.len()),
+                "invalid generated audio length: {}",
+                audio_buf.buf.len()
+            );
+            device.queue(
+                &audio_buf
+                    .buf
+                    .iter()
+                    .map(|s| [s.right, s.left])
+                    .flatten()
+                    .collect::<Vec<_>>(),
+            );
         }
-
-        device.queue(
-            &audio_buf
-                .buf
-                .iter()
-                .map(|s| [s.right, s.left])
-                .flatten()
-                .collect::<Vec<_>>(),
-        );
 
         // FIXME
-        timer.wait_for_frame(FPS * 2.0);
+        timer.wait_for_frame(if !is_turbo { 999.9 } else { 999.0 });
     }
 
     if let Some(ram) = gb.backup_ram() {
@@ -299,7 +319,11 @@ fn save_backup_ram(file: &Path, ram: &[u8]) -> Result<()> {
             save_file_path.display()
         );
     }
-    std::fs::write(save_file_path, ram)?;
+    // Atomic write to save file
+    use std::io::Write;
+    let mut f = tempfile::NamedTempFile::new()?;
+    f.write_all(ram)?;
+    f.persist(save_file_path)?;
 
     Ok(())
 }
@@ -333,152 +357,242 @@ fn process_events(event_pump: &mut EventPump) -> bool {
     true
 }
 
-struct InputManager {
-    key_config: KeyConfig,
-    controllers: Vec<GameController>,
-}
-
-struct KeyConfig {
-    up: Vec<Key>,
-    down: Vec<Key>,
-    left: Vec<Key>,
-    right: Vec<Key>,
-    a: Vec<Key>,
-    b: Vec<Key>,
-    start: Vec<Key>,
-    select: Vec<Key>,
-}
-
-enum Key {
+#[derive(Clone)]
+enum KeyAssign {
     Keyboard {
         scancode: keyboard::Scancode,
     },
-    GameController {
+    PadButton {
         id: usize,
         button: controller::Button,
     },
+    PadAxis {
+        id: usize,
+        axis: controller::Axis,
+    },
+    All(Vec<KeyAssign>),
+    Any(Vec<KeyAssign>),
 }
+
+macro_rules! kbd {
+    ($scancode:ident) => {
+        KeyAssign::Keyboard {
+            scancode: sdl2::keyboard::Scancode::$scancode,
+        }
+    };
+}
+
+macro_rules! pad_button {
+    ($id:expr, $button:ident) => {
+        KeyAssign::PadButton {
+            id: $id,
+            button: controller::Button::$button,
+        }
+    };
+}
+
+macro_rules! pad_axis {
+    ($id:expr, $axis:ident) => {
+        KeyAssign::PadAxis {
+            id: $id,
+            axis: controller::Axis::$axis,
+        }
+    };
+}
+
+macro_rules! any {
+    ($($key:expr),* $(,)?) => {
+        KeyAssign::Any(vec![$($key),*])
+    };
+}
+
+macro_rules! all {
+    ($($key:expr),* $(,)?) => {
+        KeyAssign::All(vec![$($key),*])
+    };
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum PadButton {
+    Up,
+    Down,
+    Left,
+    Right,
+    A,
+    B,
+    Start,
+    Select,
+}
+
+struct KeyConfig(Vec<(PadButton, KeyAssign)>);
 
 impl Default for KeyConfig {
     fn default() -> Self {
-        use sdl2::keyboard::Scancode;
-
-        Self {
-            up: vec![
-                Key::Keyboard {
-                    scancode: Scancode::Up,
-                },
-                Key::GameController {
-                    id: 0,
-                    button: controller::Button::DPadUp,
-                },
-            ],
-            down: vec![
-                Key::Keyboard {
-                    scancode: Scancode::Down,
-                },
-                Key::GameController {
-                    id: 0,
-                    button: controller::Button::DPadDown,
-                },
-            ],
-            left: vec![
-                Key::Keyboard {
-                    scancode: Scancode::Left,
-                },
-                Key::GameController {
-                    id: 0,
-                    button: controller::Button::DPadLeft,
-                },
-            ],
-            right: vec![
-                Key::Keyboard {
-                    scancode: Scancode::Right,
-                },
-                Key::GameController {
-                    id: 0,
-                    button: controller::Button::DPadRight,
-                },
-            ],
-            a: vec![
-                Key::Keyboard {
-                    scancode: Scancode::Z,
-                },
-                Key::GameController {
-                    id: 0,
-                    button: controller::Button::A,
-                },
-            ],
-            b: vec![
-                Key::Keyboard {
-                    scancode: Scancode::X,
-                },
-                Key::GameController {
-                    id: 0,
-                    button: controller::Button::X,
-                },
-            ],
-            start: vec![
-                Key::Keyboard {
-                    scancode: Scancode::Return,
-                },
-                Key::GameController {
-                    id: 0,
-                    button: controller::Button::Start,
-                },
-            ],
-            select: vec![
-                Key::Keyboard {
-                    scancode: Scancode::RShift,
-                },
-                Key::GameController {
-                    id: 0,
-                    button: controller::Button::Back,
-                },
-            ],
-        }
+        use PadButton::*;
+        Self(vec![
+            (Up, any![kbd!(Up), pad_button!(0, DPadUp)]),
+            (Down, any![kbd!(Down), pad_button!(0, DPadDown)]),
+            (Left, any![kbd!(Left), pad_button!(0, DPadLeft)]),
+            (Right, any![kbd!(Right), pad_button!(0, DPadRight)]),
+            (A, any![kbd!(Z), pad_button!(0, A)]),
+            (B, any![kbd!(X), pad_button!(0, X)]),
+            (Start, any![kbd!(Return), pad_button!(0, Start)]),
+            (Select, any![kbd!(RShift), pad_button!(0, Back)]),
+        ])
     }
 }
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum HotKey {
+    Turbo,
+    StateSave,
+    StateLoad,
+    FullScreen,
+}
+
+struct HotKeys(Vec<(HotKey, KeyAssign)>);
+
+impl Default for HotKeys {
+    fn default() -> Self {
+        use HotKey::*;
+        Self(vec![
+            (Turbo, any![kbd!(Tab), pad_axis!(0, TriggerLeft)]),
+            (StateSave, all![kbd!(LCtrl), kbd!(S)]),
+            (StateLoad, all![kbd!(LCtrl), kbd!(L)]),
+            (FullScreen, all![kbd!(RAlt), kbd!(Return)]),
+        ])
+    }
+}
+
+#[derive(PartialEq, Eq, Clone)]
+enum Key {
+    PadButton(PadButton),
+    HotKey(HotKey),
+}
+
+struct KeyState {
+    key: Key,
+    key_assign: KeyAssign,
+    pressed: bool,
+    prev_pressed: bool,
+}
+
+impl KeyState {
+    fn pressed(&self) -> bool {
+        self.pressed
+    }
+
+    fn pushed(&self) -> bool {
+        self.pressed && !self.prev_pressed
+    }
+
+    fn update(&mut self, pressed: bool) {
+        self.prev_pressed = self.pressed;
+        self.pressed = pressed;
+    }
+}
+
+struct InputManager {
+    controllers: Vec<GameController>,
+    key_states: Vec<KeyState>,
+}
+
+static NULL_KEY: KeyState = KeyState {
+    key: Key::PadButton(PadButton::Up),
+    key_assign: any![],
+    pressed: false,
+    prev_pressed: false,
+};
+
 impl InputManager {
-    fn new(sdl: &Sdl, key_config: KeyConfig) -> Result<Self> {
+    fn new(sdl: &Sdl, key_config: &KeyConfig, hotkeys: &HotKeys) -> Result<Self> {
         let gcs = sdl.game_controller().map_err(|e| anyhow!("{e}"))?;
 
         let controllers = (0..(gcs.num_joysticks().map_err(|e| anyhow!("{e}"))?))
             .map(|id| gcs.open(id))
             .collect::<Result<Vec<_>, _>>()?;
 
+        let mut key_states = vec![];
+
+        for r in &key_config.0 {
+            key_states.push(KeyState {
+                key: Key::PadButton(r.0.clone()),
+                key_assign: r.1.clone(),
+                pressed: false,
+                prev_pressed: false,
+            });
+        }
+
+        for r in &hotkeys.0 {
+            key_states.push(KeyState {
+                key: Key::HotKey(r.0.clone()),
+                key_assign: r.1.clone(),
+                pressed: false,
+                prev_pressed: false,
+            });
+        }
+
         Ok(Self {
-            key_config,
             controllers,
+            key_states,
         })
     }
 
-    fn get_input(&self, e: &EventPump) -> Input {
+    fn update(&mut self, e: &EventPump) {
         let kbstate = keyboard::KeyboardState::new(e);
 
-        let pressed = |keys: &Vec<Key>| {
-            keys.iter().any(|k| match k {
-                Key::Keyboard { scancode } => kbstate.is_scancode_pressed(*scancode),
-                Key::GameController { id, button } => self
-                    .controllers
-                    .get(*id)
-                    .map_or(false, |r| r.button(*button)),
-            })
-        };
+        // for i in 0..self.key_states.len() {}
+        for r in &mut self.key_states {
+            let pressed = check_pressed(&kbstate, &self.controllers, &r.key_assign);
+            r.update(pressed);
+        }
+    }
 
-        let pad = Pad {
-            up: pressed(&self.key_config.up),
-            down: pressed(&self.key_config.down),
-            left: pressed(&self.key_config.left),
-            right: pressed(&self.key_config.right),
-            a: pressed(&self.key_config.a),
-            b: pressed(&self.key_config.b),
-            start: pressed(&self.key_config.start),
-            select: pressed(&self.key_config.select),
-        };
+    fn input(&self) -> Input {
+        use PadButton::*;
+        Input {
+            pad: Pad {
+                up: self.pad_button(Up).pressed(),
+                down: self.pad_button(Down).pressed(),
+                left: self.pad_button(Left).pressed(),
+                right: self.pad_button(Right).pressed(),
+                a: self.pad_button(A).pressed(),
+                b: self.pad_button(B).pressed(),
+                start: self.pad_button(Start).pressed(),
+                select: self.pad_button(Select).pressed(),
+            },
+        }
+    }
 
-        Input { pad }
+    fn pad_button(&self, pad_button: PadButton) -> &KeyState {
+        self.key_states
+            .iter()
+            .find(|r| &r.key == &Key::PadButton(pad_button))
+            .unwrap_or(&NULL_KEY)
+    }
+
+    fn hotkey(&self, hotkey: HotKey) -> &KeyState {
+        self.key_states
+            .iter()
+            .find(|r| &r.key == &Key::HotKey(hotkey))
+            .unwrap_or(&NULL_KEY)
+    }
+}
+
+fn check_pressed(
+    kbstate: &keyboard::KeyboardState<'_>,
+    controllers: &[GameController],
+    key: &KeyAssign,
+) -> bool {
+    use KeyAssign::*;
+    match key {
+        Keyboard { scancode } => kbstate.is_scancode_pressed(*scancode),
+        PadButton { id, button } => controllers.get(*id).map_or(false, |r| r.button(*button)),
+        PadAxis { id, axis } => controllers
+            .get(*id)
+            .map_or(false, |r| dbg!(r.axis(*axis)) > 32767 / 2),
+        All(keys) => keys.iter().all(|k| check_pressed(kbstate, controllers, k)),
+        Any(keys) => keys.iter().any(|k| check_pressed(kbstate, controllers, k)),
     }
 }
 

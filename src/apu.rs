@@ -1,7 +1,7 @@
-use std::cmp::min;
-
 use bitvec::prelude::*;
 use log::trace;
+use serde::Serialize;
+use std::cmp::min;
 
 use crate::{
     consts::{AUDIO_SAMPLE_PER_FRAME, DOTS_PER_LINE, LINES_PER_FRAME},
@@ -9,6 +9,7 @@ use crate::{
     util::{pack, ClockDivider, Ref},
 };
 
+#[derive(Serialize)]
 pub struct Apu {
     pulse: [Pulse; 2],
     wave: Wave,
@@ -21,10 +22,11 @@ pub struct Apu {
     frame_sequencer_step: u64,
     sampling_counter: u64,
 
+    #[serde(skip_serializing)]
     audio_buffer: Ref<AudioBuffer>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize)]
 struct ChannelCtrl {
     vin_enable: bool,
     volume: u8,
@@ -263,7 +265,7 @@ impl Apu {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize)]
 struct Pulse {
     has_sweep_unit: bool,
     sweep_period: u8,
@@ -557,7 +559,7 @@ impl Pulse {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 struct Wave {
     enable: bool,
     length: u16,      // Sound Length = (256-t1)*(1/256) seconds
@@ -695,7 +697,7 @@ impl Wave {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 struct Noise {
     length: u8, // Sound Length = (64-t1)*(1/256) seconds
     initial_volume: u8,

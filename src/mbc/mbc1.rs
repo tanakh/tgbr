@@ -1,12 +1,13 @@
+use bitvec::prelude::*;
+use serde::Serialize;
+
 use crate::{
-    mbc::Mbc,
     rom::Rom,
     util::{to_si_bytesize, Ref},
 };
-use bitvec::prelude::*;
 
+#[derive(Serialize)]
 pub struct Mbc1 {
-    rom: Ref<Rom>,
     ram: Vec<u8>,
     rom_bank: u8,
     ram_enable: bool,
@@ -14,6 +15,8 @@ pub struct Mbc1 {
     rom_bank_mask: u8,
     ram_bank_mask: u8,
     banking_mode: bool,
+    #[serde(skip_serializing)]
+    rom: Ref<Rom>,
 }
 
 impl Mbc1 {
@@ -49,10 +52,8 @@ impl Mbc1 {
             banking_mode: false,
         }
     }
-}
 
-impl Mbc for Mbc1 {
-    fn read(&mut self, addr: u16) -> u8 {
+    pub fn read(&mut self, addr: u16) -> u8 {
         // TODO: Advanced ROM Banking Mode
         match addr {
             0x0000..=0x3FFF => self.rom.borrow().data[addr as usize],
@@ -68,7 +69,7 @@ impl Mbc for Mbc1 {
         }
     }
 
-    fn write(&mut self, addr: u16, data: u8) {
+    pub fn write(&mut self, addr: u16, data: u8) {
         match addr {
             0x0000..=0x1FFF => self.ram_enable = data & 0x0F == 0x0A,
             0x2000..=0x3FFF => self.rom_bank.view_bits_mut::<Lsb0>()[0..=4]
@@ -86,7 +87,7 @@ impl Mbc for Mbc1 {
         }
     }
 
-    fn backup_ram(&self) -> Option<&[u8]> {
+    pub fn backup_ram(&self) -> Option<&[u8]> {
         if self.rom.borrow().cartridge_type.has_battery {
             Some(&self.ram)
         } else {

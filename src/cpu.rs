@@ -1,11 +1,10 @@
-use crate::{
-    bus::Bus,
-    util::{ConstEval, Ref},
-};
-use log::{debug, log_enabled, trace, Level};
-
 use bitvec::prelude::*;
+use log::{debug, log_enabled, trace, Level};
+use serde::{Deserialize, Serialize};
 
+use crate::util::ConstEval;
+
+#[derive(Default, Serialize, Deserialize)]
 pub struct Cpu {
     halting: bool,
     interrupt_master_enable: bool,
@@ -13,12 +12,20 @@ pub struct Cpu {
     reg: Register,
     cycle: u64,
     period: u64,
-    interrupt_enable: Ref<u8>,
-    interrupt_flag: Ref<u8>,
-    bus: Ref<Bus>,
 }
 
-#[derive(Default)]
+pub trait Context {
+    fn tick(&mut self);
+    fn read(&mut self, addr: u16) -> u8;
+    fn read_immutable(&mut self, addr: u16) -> Option<u8>;
+    fn write(&mut self, addr: u16, data: u8);
+    fn interrupt_enable(&mut self) -> u8;
+    fn set_interrupt_enable(&mut self, data: u8);
+    fn interrupt_flag(&mut self) -> u8;
+    fn set_interrupt_flag(&mut self, data: u8);
+}
+
+#[derive(Default, Serialize, Deserialize)]
 pub struct Register {
     pub a: u8,
     pub f: Flag,
@@ -70,7 +77,7 @@ impl Register {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Flag {
     pub z: bool,
     pub n: bool,
@@ -197,102 +204,93 @@ macro_rules! indexing {
 }
 
 impl Cpu {
-    pub fn new(bus: &Ref<Bus>, interrupt_enable: &Ref<u8>, interrupt_flag: &Ref<u8>) -> Self {
-        Self {
-            reg: Register::default(),
-            halting: false,
-            interrupt_master_enable: false,
-            prev_interrupt_enable: false,
-            cycle: 0,
-            period: 0,
-            interrupt_enable: Ref::clone(interrupt_enable),
-            interrupt_flag: Ref::clone(interrupt_flag),
-            bus: Ref::clone(bus),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn register(&mut self) -> &mut Register {
         &mut self.reg
     }
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self, ctx: &mut impl Context) {
         self.period += 1;
         while self.cycle < self.period {
             if self.halting {
                 // FIXME: halt bug?
-                if *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow() != 0 {
+                if ctx.interrupt_flag() & ctx.interrupt_enable() != 0 {
                     self.halting = false;
                     debug!("WAKE UP");
                 }
-                self.tick();
+                self.tick(ctx);
                 self.prev_interrupt_enable = self.interrupt_master_enable;
                 continue;
             }
             let pc = self.reg.pc;
-            let opc = self.fetch();
-            if self.process_interrupt(pc) {
+            let opc = self.fetch(ctx);
+            if self.process_interrupt(ctx, pc) {
                 continue;
             }
             if log_enabled!(Level::Trace) {
-                self.trace(pc, opc);
+                self.trace(ctx, pc, opc);
             }
-            self.exec_instr(opc);
+            self.exec_instr(ctx, opc);
         }
     }
 
-    fn process_interrupt(&mut self, ret_addr: u16) -> bool {
+    fn process_interrupt(&mut self, ctx: &mut impl Context, ret_addr: u16) -> bool {
         let prev_interrupt_enable = self.prev_interrupt_enable;
         self.prev_interrupt_enable = self.interrupt_master_enable;
 
         if !prev_interrupt_enable {
             return false;
         }
-        if *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow() == 0 {
+        if ctx.interrupt_flag() & ctx.interrupt_enable() == 0 {
             return false;
         }
 
-        let prev_if = *self.interrupt_flag.borrow();
+        let prev_if = ctx.interrupt_flag();
         self.interrupt_master_enable = false;
 
-        self.push((ret_addr >> 8) as u8);
+        self.push(ctx, (ret_addr >> 8) as u8);
         // Dispatch interrupt vector at this timing
-        let addr = self.dispatch_interrupt();
-        self.push((ret_addr & 0xff) as u8);
+        let addr = self.dispatch_interrupt(ctx);
+        self.push(ctx, (ret_addr & 0xff) as u8);
 
         self.reg.pc = addr;
         debug!(
             "Interrupt occured: IE:{:02X}, IF:{:02X}->{:02X}, ADDR:{:04X}",
-            *self.interrupt_enable.borrow(),
+            ctx.interrupt_enable(),
             prev_if,
-            *self.interrupt_flag.borrow(),
+            ctx.interrupt_flag(),
             self.reg.pc
         );
 
-        self.tick();
-        self.tick();
-        self.tick();
+        self.tick(ctx);
+        self.tick(ctx);
+        self.tick(ctx);
         true
     }
 
-    fn dispatch_interrupt(&mut self) -> u16 {
-        let b = *self.interrupt_flag.borrow() & *self.interrupt_enable.borrow();
+    fn dispatch_interrupt(&mut self, ctx: &mut impl Context) -> u16 {
+        let b = ctx.interrupt_flag() & ctx.interrupt_enable();
         if b == 0 {
             // IE (=$FFFF) is written in pushing upper byte of PC, dispatching interrupt vector canceled
             0x0000
         } else {
             let pos = b.trailing_zeros();
-            *self.interrupt_flag.borrow_mut() &= !(1 << pos);
+            let new_if = ctx.interrupt_flag() & !(1 << pos);
+            ctx.set_interrupt_flag(new_if);
             0x0040 + pos as u16 * 8
         }
     }
 
-    fn exec_instr(&mut self, opc: u8) {
+    fn exec_instr(&mut self, ctx: &mut impl Context, opc: u8) {
         macro_rules! load {
             (n) => {
-                self.fetch()
+                self.fetch(ctx)
             };
             (nn) => {
-                self.fetch_u16()
+                self.fetch_u16(ctx)
             };
 
             (A) => {
@@ -333,46 +331,46 @@ impl Cpu {
                 self.reg.sp
             };
             (SPn) => {{
-                let opr = self.fetch() as i8 as u16;
+                let opr = self.fetch(ctx) as i8 as u16;
                 let dst = self.reg.sp;
                 let res = dst.wrapping_add(opr);
                 self.reg.f.z = false;
                 self.reg.f.n = false;
                 self.reg.f.h = (opr ^ dst ^ res) & 0x10 != 0;
                 self.reg.f.c = (opr ^ dst ^ res) & 0x100 != 0;
-                self.tick();
+                self.tick(ctx);
                 res
             }};
             (r8) => {{
-                self.fetch() as i8
+                self.fetch(ctx) as i8
             }};
 
             ((C)) => {
-                self.read(0xFF00 | self.reg.c as u16)
+                self.read(ctx, 0xFF00 | self.reg.c as u16)
             };
             ((BC)) => {
-                self.read(self.reg.bc())
+                self.read(ctx, self.reg.bc())
             };
             ((DE)) => {
-                self.read(self.reg.de())
+                self.read(ctx, self.reg.de())
             };
             ((HL)) => {{
                 let hl = self.reg.hl();
-                self.read(hl)
+                self.read(ctx, hl)
             }};
             ((^HL)) => {{
                 let hl = self.reg.hl();
                 self.reg.set_hl(hl.wrapping_add(1));
-                self.read(hl)
+                self.read(ctx, hl)
             }};
             ((-HL)) => {{
                 let hl = self.reg.hl();
                 self.reg.set_hl(hl.wrapping_sub(1));
-                self.read(hl)
+                self.read(ctx, hl)
             }};
             ((nn)) => {{
-                let addr = self.fetch_u16();
-                self.read(addr)
+                let addr = self.fetch_u16(ctx);
+                self.read(ctx, addr)
             }};
         }
 
@@ -416,34 +414,34 @@ impl Cpu {
             }};
 
             ((C), $data:ident) => {
-                self.write(0xFF00 | self.reg.c as u16, $data)
+                self.write(ctx, 0xFF00 | self.reg.c as u16, $data)
             };
             ((BC), $data:ident) => {
-                self.write(self.reg.bc(), $data)
+                self.write(ctx, self.reg.bc(), $data)
             };
             ((DE), $data:ident) => {
-                self.write(self.reg.de(), $data)
+                self.write(ctx, self.reg.de(), $data)
             };
             ((HL), $data:ident) => {{
                 let hl = self.reg.hl();
-                self.write(hl, $data);
+                self.write(ctx, hl, $data);
             }};
             ((^HL), $data:ident) => {{
                 let hl = self.reg.hl();
-                self.write(hl, $data);
+                self.write(ctx, hl, $data);
                 self.reg.set_hl(hl.wrapping_add(1));
             }};
             ((-HL), $data:ident) => {{
                 let hl = self.reg.hl();
-                self.write(hl, $data);
+                self.write(ctx, hl, $data);
                 self.reg.set_hl(hl.wrapping_sub(1));
             }};
             ((nn), $data:ident) => {{
-                let addr = self.fetch_u16();
+                let addr = self.fetch_u16(ctx);
                 if std::mem::size_of_val(&$data) == 1 {
-                    self.write(addr, $data as u8);
+                    self.write(ctx, addr, $data as u8);
                 } else {
-                    self.write_u16(addr, $data as u16);
+                    self.write_u16(ctx, addr, $data as u16);
                 }
             }};
         }
@@ -466,29 +464,29 @@ impl Cpu {
         macro_rules! gen_mne {
             (LD SP, HL) => {{
                 self.reg.sp = self.reg.hl();
-                self.tick();
+                self.tick(ctx);
             }};
             (LD $dst:tt, $src:tt) => {{
                 let src = load!($src);
                 store!($dst, src);
             }};
             (LDH (n), $src:tt) => {{
-                let addr = 0xFF00 | self.fetch() as u16;
-                self.write(addr, load!($src))
+                let addr = 0xFF00 | self.fetch(ctx) as u16;
+                self.write(ctx, addr, load!($src))
             }};
             (LDH $dst:tt, (n)) => {{
-                let addr = 0xFF00 | self.fetch() as u16;
-                let data = self.read(addr);
+                let addr = 0xFF00 | self.fetch(ctx) as u16;
+                let data = self.read(ctx, addr);
                 store!($dst, data)
             }};
 
             (PUSH $opr:tt) => {{
                 let data = load!($opr);
-                self.tick();
-                self.push_u16(data);
+                self.tick(ctx);
+                self.push_u16(ctx, data);
             }};
             (POP $opr:tt) => {{
-                let data = self.pop_u16();
+                let data = self.pop_u16(ctx);
                 store!($opr, data);
             }};
 
@@ -503,7 +501,7 @@ impl Cpu {
             }};
             (ADD HL, $opr:tt) => {{
                 let opr = load!($opr);
-                self.tick();
+                self.tick(ctx);
                 let dst = self.reg.hl();
                 let (res, overflow) = dst.overflowing_add(opr);
                 self.reg.f.n = false;
@@ -513,8 +511,8 @@ impl Cpu {
             }};
             (ADD SP, $opr:tt) => {{
                 let opr = load!($opr) as i8 as u16;
-                self.tick();
-                self.tick();
+                self.tick(ctx);
+                self.tick(ctx);
                 let dst = self.reg.sp;
                 let res = dst.wrapping_add(opr);
                 self.reg.f.z = false;
@@ -594,7 +592,7 @@ impl Cpu {
                     self.reg.f.h = (opr ^ res) & 0x10 != 0;
                     store!($opr, res);
                 } else {
-                    self.tick();
+                    self.tick(ctx);
                     let res = opr.wrapping_add(1);
                     store!($opr, res);
                 }
@@ -608,7 +606,7 @@ impl Cpu {
                     self.reg.f.h = (opr ^ res) & 0x10 != 0;
                     store!($opr, res);
                 } else {
-                    self.tick();
+                    self.tick(ctx);
                     let res = opr.wrapping_sub(1);
                     store!($opr, res);
                 }
@@ -767,7 +765,7 @@ impl Cpu {
 
             (JP nn) => {{
                 self.reg.pc = load!(nn);
-                self.tick();
+                self.tick(ctx);
             }};
             (JP (HL)) => {{
                 self.reg.pc = self.reg.hl();
@@ -776,55 +774,55 @@ impl Cpu {
                 let addr = load!(nn);
                 if cond!($cc) {
                     self.reg.pc = addr;
-                    self.tick();
+                    self.tick(ctx);
                 }
             }};
             (JR $opr:tt) => {{
                 let r = load!($opr) as u16;
                 self.reg.pc = self.reg.pc.wrapping_add(r);
-                self.tick();
+                self.tick(ctx);
             }};
             (JR $cc:tt, $opr:tt) => {{
                 let r = load!($opr) as u16;
                 if cond!($cc) {
                     self.reg.pc = self.reg.pc.wrapping_add(r);
-                    self.tick();
+                    self.tick(ctx);
                 }
             }};
             (CALL $opr:tt) => {{
                 let addr = load!($opr);
-                self.tick();
-                self.push_u16(self.reg.pc);
+                self.tick(ctx);
+                self.push_u16(ctx, self.reg.pc);
                 self.reg.pc = addr;
             }};
             (CALL $cc:tt, $opr:tt) => {{
                 let addr = load!($opr);
                 if cond!($cc) {
-                    self.tick();
-                    self.push_u16(self.reg.pc);
+                    self.tick(ctx);
+                    self.push_u16(ctx, self.reg.pc);
                     self.reg.pc = addr;
                 }
             }};
             (RST $opr:expr) => {{
-                self.tick();
-                self.push_u16(self.reg.pc);
+                self.tick(ctx);
+                self.push_u16(ctx, self.reg.pc);
                 self.reg.pc = $opr;
             }};
 
             (RET) => {{
-                self.reg.pc = self.pop_u16();
-                self.tick();
+                self.reg.pc = self.pop_u16(ctx);
+                self.tick(ctx);
             }};
             (RET $cc:tt) => {{
-                self.tick();
+                self.tick(ctx);
                 if cond!($cc) {
-                    self.reg.pc = self.pop_u16();
-                    self.tick();
+                    self.reg.pc = self.pop_u16(ctx);
+                    self.tick(ctx);
                 }
             }};
             (RETI) => {{
-                self.reg.pc = self.pop_u16();
-                self.tick();
+                self.reg.pc = self.pop_u16(ctx);
+                self.tick(ctx);
                 self.interrupt_master_enable = true;
             }};
 
@@ -859,7 +857,7 @@ impl Cpu {
 
         macro_rules! gen_code_cb {
             ($($ix:expr => $mne:ident $opr:tt;)*) => {{
-                let opc_cb = self.fetch();
+                let opc_cb = self.fetch(ctx);
                 match opc_cb {
                     $( ConstEval::<{$ix}>::VALUE => gen_instr!($mne $opr), )*
                 }
@@ -871,66 +869,66 @@ impl Cpu {
 }
 
 impl Cpu {
-    fn tick(&mut self) {
+    fn tick(&mut self, ctx: &mut impl Context) {
         self.cycle += 1;
-        self.bus.borrow_mut().tick();
+        ctx.tick();
     }
 
-    fn read(&mut self, addr: u16) -> u8 {
-        let data = self.bus.borrow_mut().read(addr);
-        self.tick();
+    fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
+        let data = ctx.read(addr);
+        self.tick(ctx);
         data
     }
 
-    fn write(&mut self, addr: u16, data: u8) {
-        self.bus.borrow_mut().write(addr, data);
-        self.tick();
+    fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
+        ctx.write(addr, data);
+        self.tick(ctx);
     }
 
-    fn write_u16(&mut self, addr: u16, data: u16) {
-        self.write(addr, (data & 0xFF) as u8);
-        self.write(addr.wrapping_add(1), (data >> 8) as u8);
+    fn write_u16(&mut self, ctx: &mut impl Context, addr: u16, data: u16) {
+        self.write(ctx, addr, (data & 0xFF) as u8);
+        self.write(ctx, addr.wrapping_add(1), (data >> 8) as u8);
     }
 
-    fn fetch(&mut self) -> u8 {
-        let ret = self.read(self.reg.pc);
+    fn fetch(&mut self, ctx: &mut impl Context) -> u8 {
+        let ret = self.read(ctx, self.reg.pc);
         self.reg.pc += 1;
         ret
     }
 
-    fn fetch_u16(&mut self) -> u16 {
-        let lo = self.fetch();
-        let hi = self.fetch();
+    fn fetch_u16(&mut self, ctx: &mut impl Context) -> u16 {
+        let lo = self.fetch(ctx);
+        let hi = self.fetch(ctx);
         lo as u16 | (hi as u16) << 8
     }
 
-    fn push(&mut self, data: u8) {
+    fn push(&mut self, ctx: &mut impl Context, data: u8) {
         self.reg.sp -= 1;
-        self.write(self.reg.sp, data);
+        self.write(ctx, self.reg.sp, data);
     }
 
-    fn push_u16(&mut self, data: u16) {
-        self.push((data >> 8) as u8);
-        self.push((data & 0xFF) as u8);
+    fn push_u16(&mut self, ctx: &mut impl Context, data: u16) {
+        self.push(ctx, (data >> 8) as u8);
+        self.push(ctx, (data & 0xFF) as u8);
     }
 
-    fn pop(&mut self) -> u8 {
-        let ret = self.read(self.reg.sp);
+    fn pop(&mut self, ctx: &mut impl Context) -> u8 {
+        let ret = self.read(ctx, self.reg.sp);
         self.reg.sp += 1;
         ret
     }
 
-    fn pop_u16(&mut self) -> u16 {
-        let lo = self.pop();
-        let hi = self.pop();
+    fn pop_u16(&mut self, ctx: &mut impl Context) -> u16 {
+        let lo = self.pop(ctx);
+        let hi = self.pop(ctx);
         lo as u16 | (hi as u16) << 8
     }
 }
 
 impl Cpu {
-    fn trace(&mut self, pc: u16, opc: u8) {
-        let opr1 = self.bus.borrow_mut().read_immutable(pc.wrapping_add(1));
-        let opr2 = self.bus.borrow_mut().read_immutable(pc.wrapping_add(2));
+    fn trace(&mut self, ctx: &mut impl Context, pc: u16, opc: u8) {
+        let opr1 = ctx.read_immutable(pc.wrapping_add(1));
+        let opr2 = ctx.read_immutable(pc.wrapping_add(2));
 
         let (asm, op_len) = disasm(pc, opc, opr1, opr2);
 
@@ -961,8 +959,8 @@ impl Cpu {
             hf = if self.reg.f.h { 'H' } else { '.' },
             cf = if self.reg.f.c { 'C' } else { '.' },
             ime = self.interrupt_master_enable as u8,
-            ie = *self.interrupt_enable.borrow(),
-            inf = *self.interrupt_flag.borrow(),
+            ie = ctx.interrupt_enable(),
+            inf = ctx.interrupt_flag(),
             frm = self.cycle / CPU_CLOCK_PER_LINE / LINES_PER_FRAME,
             ly = self.cycle / CPU_CLOCK_PER_LINE % LINES_PER_FRAME,
             lx = self.cycle % CPU_CLOCK_PER_LINE,

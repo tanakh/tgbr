@@ -1,21 +1,30 @@
 use log::{trace, warn};
+use serde::Serialize;
+use serde_big_array::BigArray;
 
 use crate::{io::Io, mbc::Mbc, util::Ref};
 
+#[derive(Serialize)]
 pub struct Bus {
+    #[serde(with = "BigArray")]
+    // #[serde(with = "serde_bytes")]
     ram: [u8; 0x2000],
     vram: Ref<Vec<u8>>,
     oam: Ref<Vec<u8>>,
     oam_lock: Ref<bool>,
+    #[serde(with = "BigArray")]
     hiram: [u8; 0x7F],
+    #[serde(with = "BigArray")]
     boot_rom: [u8; 0x100],
     map_boot_rom: bool,
-    mbc: Ref<dyn Mbc>,
+    #[serde(skip_serializing)]
+    mbc: Ref<Mbc>,
+    #[serde(skip_serializing)]
     io: Ref<Io>,
     dma: Dma,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 struct Dma {
     source: u8,
     pos: u8,
@@ -25,7 +34,7 @@ struct Dma {
 
 impl Bus {
     pub fn new(
-        mbc: &Ref<dyn Mbc>,
+        mbc: &Ref<Mbc>,
         vram: &Ref<Vec<u8>>,
         oam: &Ref<Vec<u8>>,
         oam_lock: &Ref<bool>,

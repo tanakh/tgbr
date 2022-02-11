@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::interface::Color;
 
 const DEFAULT_DMG_PALETTE: [Color; 4] = [
@@ -13,7 +15,7 @@ pub struct Config {
     pub boot_rom: Option<Vec<u8>>,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Serialize)]
 pub enum Model {
     Auto,
     Dmg,

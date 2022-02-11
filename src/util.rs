@@ -1,5 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, ops::Deref, rc::Rc};
 
+#[derive(Serialize)]
+#[serde(bound = "T: Serialize + Sized")]
 pub struct Ref<T: ?Sized>(pub Rc<RefCell<T>>);
 
 impl<T> Ref<T> {
@@ -21,7 +24,7 @@ impl<T: ?Sized> Clone for Ref<T> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct ClockDivider {
     count: u64,
     period: u64,

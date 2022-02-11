@@ -1,5 +1,6 @@
 use bitvec::prelude::*;
 use log::trace;
+use serde::Serialize;
 
 use crate::{
     consts::INT_SERIAL,
@@ -7,6 +8,7 @@ use crate::{
     util::{pack, Ref},
 };
 
+#[derive(Serialize)]
 pub struct SerialTransfer {
     buf: u8,
     recv_buf: Option<u8>,
@@ -14,7 +16,9 @@ pub struct SerialTransfer {
     use_internal_clock: bool,
     transfer_timer: u64,
     transfer_pos: usize,
+    #[serde(skip_serializing)]
     interrupt_flag: Ref<u8>,
+    #[serde(skip)]
     link_cable: Option<Ref<dyn LinkCable>>,
 }
 

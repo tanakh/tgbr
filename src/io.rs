@@ -1,5 +1,6 @@
 use bitvec::prelude::*;
 use log::{trace, warn};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     apu::Apu,
@@ -10,6 +11,7 @@ use crate::{
     util::{pack, Ref},
 };
 
+#[derive(Serialize)]
 pub struct Io {
     select_action_buttons: bool,
     select_direction_buttons: bool,
@@ -22,10 +24,14 @@ pub struct Io {
     prev_timer_clock: bool,
     timer_reload: bool,
     timer_reloaded: bool,
+    #[serde(skip_serializing)]
     interrupt_flag: Ref<u8>,
+    #[serde(skip_serializing)]
     interrupt_enable: Ref<u8>,
 
+    #[serde(skip_serializing)]
     ppu: Ref<Ppu>,
+    #[serde(skip_serializing)]
     apu: Ref<Apu>,
     serial: SerialTransfer,
     input: Input,

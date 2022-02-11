@@ -1,11 +1,12 @@
 use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     apu::Apu,
     bus::Bus,
     config::{Config, Model},
     consts::{SCREEN_HEIGHT, SCREEN_WIDTH},
-    cpu::Cpu,
+    cpu::{self, Cpu},
     interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable},
     io::Io,
     mbc::{create_mbc, Mbc},
@@ -14,22 +15,34 @@ use crate::{
     util::Ref,
 };
 
+#[derive(Serialize)]
 pub struct GameBoy {
     cpu: Cpu,
     io: Ref<Io>,
     ppu: Ref<Ppu>,
-    _apu: Ref<Apu>,
-    rom: Ref<Rom>,
-    mbc: Ref<dyn Mbc>,
+    apu: Ref<Apu>,
+    mbc: Ref<Mbc>,
+    ctx: Context,
     model: Model,
+    #[serde(skip)]
+    rom: Ref<Rom>,
+    #[serde(skip)]
     frame_buffer: Ref<FrameBuffer>,
+    #[serde(skip)]
     audio_buffer: Ref<AudioBuffer>,
+}
+
+#[derive(Serialize)]
+struct Context {
+    bus: Ref<Bus>,
+    interrupt_enable: Ref<u8>,
+    interrupt_flag: Ref<u8>,
 }
 
 impl GameBoy {
     pub fn new(rom: Rom, backup_ram: Option<Vec<u8>>, config: &Config) -> Result<Self> {
         let rom = Ref::new(rom);
-        let mbc = create_mbc(&rom, backup_ram);
+        let mbc = Ref::new(create_mbc(&rom, backup_ram));
         let frame_buffer = Ref::new(FrameBuffer::new(
             SCREEN_WIDTH as usize,
             SCREEN_HEIGHT as usize,
@@ -63,7 +76,8 @@ impl GameBoy {
             &config.boot_rom,
             &io,
         ));
-        let cpu = Cpu::new(&bus, &interrupt_enable, &interrupt_flag);
+        // let cpu = Cpu::new(&bus, &interrupt_enable, &interrupt_flag);
+        let cpu = Cpu::new();
 
         // Set up the contents of registers after internal ROM execution
         let model = match rom.borrow().cgb_flag {
@@ -94,9 +108,14 @@ impl GameBoy {
             cpu,
             io,
             ppu,
-            _apu: apu,
+            apu,
             rom,
             mbc,
+            ctx: Context {
+                bus,
+                interrupt_enable,
+                interrupt_flag,
+            },
             model,
             frame_buffer,
             audio_buffer,
@@ -148,7 +167,7 @@ impl GameBoy {
 
         let start_frame = self.ppu.borrow().frame();
         while start_frame == self.ppu.borrow().frame() {
-            self.cpu.step();
+            self.cpu.step(&mut self.ctx);
         }
     }
 
@@ -183,5 +202,43 @@ impl GameBoy {
         }
         let link_cable = link_cable.map(wrap_link_cable);
         self.io.borrow_mut().set_link_cable(link_cable);
+    }
+
+    // pub fn save_state() -> Value {
+    //     todo!()
+    // }
+}
+
+impl cpu::Context for Context {
+    fn tick(&mut self) {
+        self.bus.borrow_mut().tick();
+    }
+
+    fn read(&mut self, addr: u16) -> u8 {
+        self.bus.borrow_mut().read(addr)
+    }
+
+    fn read_immutable(&mut self, addr: u16) -> Option<u8> {
+        self.bus.borrow_mut().read_immutable(addr)
+    }
+
+    fn write(&mut self, addr: u16, data: u8) {
+        self.bus.borrow_mut().write(addr, data)
+    }
+
+    fn interrupt_enable(&mut self) -> u8 {
+        *self.interrupt_enable.borrow()
+    }
+
+    fn set_interrupt_enable(&mut self, data: u8) {
+        *self.interrupt_enable.borrow_mut() = data;
+    }
+
+    fn interrupt_flag(&mut self) -> u8 {
+        *self.interrupt_flag.borrow()
+    }
+
+    fn set_interrupt_flag(&mut self, data: u8) {
+        *self.interrupt_flag.borrow_mut() = data;
     }
 }

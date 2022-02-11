@@ -1,9 +1,11 @@
-#[derive(Default, Clone, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Input {
     pub pad: Pad,
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Pad {
     pub up: bool,
     pub down: bool,
@@ -15,7 +17,7 @@ pub struct Pad {
     pub select: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -28,6 +30,7 @@ impl Color {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct FrameBuffer {
     pub width: usize,
     pub height: usize,
