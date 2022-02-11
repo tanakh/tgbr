@@ -3,13 +3,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     apu::Apu,
-    bus::Bus,
+    bus,
     config::{Config, Model},
     consts::{SCREEN_HEIGHT, SCREEN_WIDTH},
-    cpu::{self, Cpu},
+    context,
+    cpu::Cpu,
     interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable},
     io::Io,
-    mbc::{create_mbc, Mbc},
+    mbc::create_mbc,
     ppu::Ppu,
     rom::{CgbFlag, Rom},
     util::Ref,
@@ -18,10 +19,8 @@ use crate::{
 #[derive(Serialize)]
 pub struct GameBoy {
     cpu: Cpu,
-    io: Ref<Io>,
     ppu: Ref<Ppu>,
     apu: Ref<Apu>,
-    mbc: Ref<Mbc>,
     ctx: Context,
     model: Model,
     #[serde(skip)]
@@ -34,15 +33,24 @@ pub struct GameBoy {
 
 #[derive(Serialize)]
 struct Context {
-    bus: Ref<Bus>,
+    bus: Ref<bus::Bus>,
     interrupt_enable: Ref<u8>,
     interrupt_flag: Ref<u8>,
+    bus_context: BusContext,
+}
+
+#[derive(Serialize)]
+struct BusContext {
+    vram: Ref<Vec<u8>>,
+    vram_lock: Ref<bool>,
+    oam: Ref<Vec<u8>>,
+    oam_lock: Ref<bool>,
 }
 
 impl GameBoy {
     pub fn new(rom: Rom, backup_ram: Option<Vec<u8>>, config: &Config) -> Result<Self> {
         let rom = Ref::new(rom);
-        let mbc = Ref::new(create_mbc(&rom, backup_ram));
+        let mbc = create_mbc(&rom, backup_ram);
         let frame_buffer = Ref::new(FrameBuffer::new(
             SCREEN_WIDTH as usize,
             SCREEN_HEIGHT as usize,
@@ -53,6 +61,7 @@ impl GameBoy {
         let interrupt_flag = Ref::new(0x00);
 
         let vram = Ref::new(vec![0; 0x2000]);
+        let vram_lock = Ref::new(false);
         let oam = Ref::new(vec![0; 0xA0]);
         let oam_lock = Ref::new(false);
 
@@ -66,17 +75,8 @@ impl GameBoy {
         ));
         let apu = Ref::new(Apu::new(&audio_buffer));
 
-        let io = Ref::new(Io::new(&ppu, &apu, &interrupt_enable, &interrupt_flag));
-
-        let bus = Ref::new(Bus::new(
-            &mbc,
-            &vram,
-            &oam,
-            &oam_lock,
-            &config.boot_rom,
-            &io,
-        ));
-        // let cpu = Cpu::new(&bus, &interrupt_enable, &interrupt_flag);
+        let io = Io::new(&ppu, &apu, &interrupt_enable, &interrupt_flag);
+        let bus = Ref::new(bus::Bus::new(mbc, &config.boot_rom, io));
         let cpu = Cpu::new();
 
         // Set up the contents of registers after internal ROM execution
@@ -106,15 +106,19 @@ impl GameBoy {
 
         let mut ret = Self {
             cpu,
-            io,
             ppu,
             apu,
             rom,
-            mbc,
             ctx: Context {
                 bus,
                 interrupt_enable,
                 interrupt_flag,
+                bus_context: BusContext {
+                    vram,
+                    vram_lock,
+                    oam,
+                    oam_lock,
+                },
             },
             model,
             frame_buffer,
@@ -180,7 +184,7 @@ impl GameBoy {
     }
 
     pub fn set_input(&mut self, input: &Input) {
-        self.io.borrow_mut().set_input(input);
+        self.ctx.bus.borrow_mut().io().set_input(input);
     }
 
     pub fn frame_buffer(&self) -> &Ref<FrameBuffer> {
@@ -192,7 +196,12 @@ impl GameBoy {
     }
 
     pub fn backup_ram(&self) -> Option<Vec<u8>> {
-        self.mbc.borrow().backup_ram().map(|r| r.to_owned())
+        self.ctx
+            .bus
+            .borrow_mut()
+            .mbc()
+            .backup_ram()
+            .map(|r| r.to_owned())
     }
 
     pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + 'static>) {
@@ -201,7 +210,7 @@ impl GameBoy {
             Ref(std::rc::Rc::new(std::cell::RefCell::new(link_cable)))
         }
         let link_cable = link_cable.map(wrap_link_cable);
-        self.io.borrow_mut().set_link_cable(link_cable);
+        self.ctx.bus.borrow_mut().io().set_link_cable(link_cable);
     }
 
     // pub fn save_state() -> Value {
@@ -209,23 +218,7 @@ impl GameBoy {
     // }
 }
 
-impl cpu::Context for Context {
-    fn tick(&mut self) {
-        self.bus.borrow_mut().tick();
-    }
-
-    fn read(&mut self, addr: u16) -> u8 {
-        self.bus.borrow_mut().read(addr)
-    }
-
-    fn read_immutable(&mut self, addr: u16) -> Option<u8> {
-        self.bus.borrow_mut().read_immutable(addr)
-    }
-
-    fn write(&mut self, addr: u16, data: u8) {
-        self.bus.borrow_mut().write(addr, data)
-    }
-
+impl context::InterruptFlag for Context {
     fn interrupt_enable(&mut self) -> u8 {
         *self.interrupt_enable.borrow()
     }
@@ -240,5 +233,68 @@ impl cpu::Context for Context {
 
     fn set_interrupt_flag(&mut self, data: u8) {
         *self.interrupt_flag.borrow_mut() = data;
+    }
+}
+
+impl context::Bus for Context {
+    fn tick(&mut self) {
+        self.bus.borrow_mut().tick(&mut self.bus_context);
+        self.bus.borrow_mut().io().tick();
+    }
+
+    fn read(&mut self, addr: u16) -> u8 {
+        self.bus.borrow_mut().read(&mut self.bus_context, addr)
+    }
+
+    fn read_immutable(&mut self, addr: u16) -> Option<u8> {
+        self.bus
+            .borrow_mut()
+            .read_immutable(&mut self.bus_context, addr)
+    }
+
+    fn write(&mut self, addr: u16, data: u8) {
+        self.bus
+            .borrow_mut()
+            .write(&mut self.bus_context, addr, data)
+    }
+}
+
+impl context::Vram for BusContext {
+    fn read_vram(&self, addr: u16) -> u8 {
+        if !*self.vram_lock.borrow() {
+            self.vram.borrow()[addr as usize]
+        } else {
+            !0
+        }
+    }
+
+    fn write_vram(&mut self, addr: u16, data: u8) {
+        if !*self.vram_lock.borrow() {
+            self.vram.borrow_mut()[addr as usize] = data;
+        }
+    }
+
+    fn lock_vram(&mut self, lock: bool) {
+        *self.vram_lock.borrow_mut() = lock;
+    }
+}
+
+impl context::Oam for BusContext {
+    fn read_oam(&self, addr: u8) -> u8 {
+        if !*self.oam_lock.borrow() {
+            self.oam.borrow()[addr as usize]
+        } else {
+            !0
+        }
+    }
+
+    fn write_oam(&mut self, addr: u8, data: u8) {
+        if !*self.oam_lock.borrow() {
+            self.oam.borrow_mut()[addr as usize] = data;
+        }
+    }
+
+    fn lock_oam(&mut self, lock: bool) {
+        *self.oam_lock.borrow_mut() = lock;
     }
 }

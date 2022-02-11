@@ -1,28 +1,25 @@
 use log::{trace, warn};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_big_array::BigArray;
 
-use crate::{io::Io, mbc::Mbc, util::Ref};
+use crate::{context, io::Io, mbc::Mbc};
 
 #[derive(Serialize)]
 pub struct Bus {
     #[serde(with = "BigArray")]
-    // #[serde(with = "serde_bytes")]
     ram: [u8; 0x2000],
-    vram: Ref<Vec<u8>>,
-    oam: Ref<Vec<u8>>,
-    oam_lock: Ref<bool>,
     #[serde(with = "BigArray")]
     hiram: [u8; 0x7F],
     #[serde(with = "BigArray")]
     boot_rom: [u8; 0x100],
     map_boot_rom: bool,
-    #[serde(skip_serializing)]
-    mbc: Ref<Mbc>,
-    #[serde(skip_serializing)]
-    io: Ref<Io>,
+    mbc: Mbc,
+    io: Io,
     dma: Dma,
 }
+
+pub trait Context: context::Vram + context::Oam {}
+impl<T: context::Vram + context::Oam> Context for T {}
 
 #[derive(Default, Serialize)]
 struct Dma {
@@ -33,59 +30,49 @@ struct Dma {
 }
 
 impl Bus {
-    pub fn new(
-        mbc: &Ref<Mbc>,
-        vram: &Ref<Vec<u8>>,
-        oam: &Ref<Vec<u8>>,
-        oam_lock: &Ref<bool>,
-        boot_rom: &Option<Vec<u8>>,
-        io: &Ref<Io>,
-    ) -> Self {
+    pub fn new(mbc: Mbc, boot_rom: &Option<Vec<u8>>, io: Io) -> Self {
         Self {
             ram: [0; 0x2000],
-            vram: Ref::clone(vram),
-            oam: Ref::clone(oam),
-            oam_lock: Ref::clone(oam_lock),
             hiram: [0; 0x7F],
             boot_rom: boot_rom
                 .as_ref()
                 .map_or_else(|| [0; 0x100], |r| r.as_slice().try_into().unwrap()),
             map_boot_rom: boot_rom.is_some(),
-            mbc: Ref::clone(mbc),
-            io: Ref::clone(io),
+            mbc: mbc,
+            io: io,
             dma: Dma::default(),
         }
     }
 
-    pub fn read(&mut self, addr: u16) -> u8 {
-        let data = self.read_(addr);
+    pub fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
+        let data = self.read_(ctx, addr);
         trace!("<-- Read:  ${addr:04X} = ${data:02X}");
         data
     }
 
-    pub fn read_immutable(&mut self, addr: u16) -> Option<u8> {
+    pub fn read_immutable(&mut self, ctx: &mut impl Context, addr: u16) -> Option<u8> {
         match addr {
             0xff00..=0xff7f | 0xffff => None,
-            _ => Some(self.read_(addr)),
+            _ => Some(self.read_(ctx, addr)),
         }
     }
 
-    fn read_(&mut self, addr: u16) -> u8 {
+    fn read_(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
         match addr {
             0x0000..=0x00FF => {
                 if self.map_boot_rom {
                     self.boot_rom[addr as usize]
                 } else {
-                    self.mbc.borrow_mut().read(addr)
+                    self.mbc.read(addr)
                 }
             }
-            0x0100..=0x7fff => self.mbc.borrow_mut().read(addr),
-            0x8000..=0x9fff => self.vram.borrow()[(addr & 0x1fff) as usize],
-            0xa000..=0xbfff => self.mbc.borrow_mut().read(addr),
+            0x0100..=0x7fff => self.mbc.read(addr),
+            0x8000..=0x9fff => ctx.read_vram(addr & 0x1fff),
+            0xa000..=0xbfff => self.mbc.read(addr),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize],
             0xfe00..=0xfe9f => {
-                if !*self.oam_lock.borrow() && !self.dma.enabled {
-                    self.oam.borrow_mut()[(addr & 0xff) as usize]
+                if !self.dma.enabled {
+                    ctx.read_oam((addr & 0xff) as u8)
                 } else {
                     !0
                 }
@@ -93,22 +80,22 @@ impl Bus {
             0xfea0..=0xfeff => todo!("Read from Unusable address: ${addr:04x}"),
             0xff46 => self.dma.source, // DMA
             0xff50 => !0,              // BANK
-            0xff00..=0xff7f => self.io.borrow_mut().read(addr),
+            0xff00..=0xff7f => self.io.read(addr),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize],
-            0xffff => self.io.borrow_mut().read(addr),
+            0xffff => self.io.read(addr),
         }
     }
 
-    pub fn write(&mut self, addr: u16, data: u8) {
+    pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
         trace!("--> Write: ${addr:04X} = ${data:02X}");
         match addr {
-            0x0000..=0x7fff => self.mbc.borrow_mut().write(addr, data),
-            0x8000..=0x9fff => self.vram.borrow_mut()[(addr & 0x1fff) as usize] = data,
-            0xa000..=0xbfff => self.mbc.borrow_mut().write(addr, data),
+            0x0000..=0x7fff => self.mbc.write(addr, data),
+            0x8000..=0x9fff => ctx.write_vram(addr & 0x1fff, data),
+            0xa000..=0xbfff => self.mbc.write(addr, data),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize] = data,
             0xfe00..=0xfe9f => {
-                if !*self.oam_lock.borrow() && !self.dma.enabled {
-                    self.oam.borrow_mut()[(addr & 0xff) as usize] = data
+                if !self.dma.enabled {
+                    ctx.write_oam((addr & 0xff) as u8, data)
                 }
             }
             0xfea0..=0xfeff => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
@@ -121,18 +108,25 @@ impl Bus {
                 self.dma.delay = 2;
             }
             0xff50 => self.map_boot_rom = data & 1 == 0, // BANK
-            0xff00..=0xff7f => self.io.borrow_mut().write(addr, data),
+            0xff00..=0xff7f => self.io.write(addr, data),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize] = data,
-            0xffff => self.io.borrow_mut().write(addr, data),
+            0xffff => self.io.write(addr, data),
         };
     }
 
-    pub fn tick(&mut self) {
-        self.process_dma();
-        self.io.borrow_mut().tick();
+    pub fn io(&mut self) -> &mut Io {
+        &mut self.io
     }
 
-    fn process_dma(&mut self) {
+    pub fn mbc(&mut self) -> &mut Mbc {
+        &mut self.mbc
+    }
+
+    pub fn tick(&mut self, ctx: &mut impl Context) {
+        self.process_dma(ctx);
+    }
+
+    fn process_dma(&mut self, ctx: &mut impl Context) {
         if self.dma.delay > 0 {
             self.dma.delay -= 1;
             if self.dma.delay == 0 {
@@ -149,8 +143,8 @@ impl Bus {
             self.dma.pos,
             self.dma.pos
         );
-        let data = self.read_((self.dma.source as u16) << 8 | self.dma.pos as u16);
-        self.oam.borrow_mut()[self.dma.pos as usize] = data;
+        let data = self.read_(ctx, (self.dma.source as u16) << 8 | self.dma.pos as u16);
+        ctx.write_oam(self.dma.pos, data);
         self.dma.pos += 1;
         if self.dma.pos == 0xA0 {
             self.dma.enabled = false;

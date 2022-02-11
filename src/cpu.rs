@@ -2,7 +2,7 @@ use bitvec::prelude::*;
 use log::{debug, log_enabled, trace, Level};
 use serde::{Deserialize, Serialize};
 
-use crate::util::ConstEval;
+use crate::{context, util::ConstEval};
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Cpu {
@@ -14,16 +14,8 @@ pub struct Cpu {
     period: u64,
 }
 
-pub trait Context {
-    fn tick(&mut self);
-    fn read(&mut self, addr: u16) -> u8;
-    fn read_immutable(&mut self, addr: u16) -> Option<u8>;
-    fn write(&mut self, addr: u16, data: u8);
-    fn interrupt_enable(&mut self) -> u8;
-    fn set_interrupt_enable(&mut self, data: u8);
-    fn interrupt_flag(&mut self) -> u8;
-    fn set_interrupt_flag(&mut self, data: u8);
-}
+pub trait Context: context::Bus + context::InterruptFlag {}
+impl<T: context::Bus + context::InterruptFlag> Context for T {}
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Register {

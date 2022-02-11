@@ -48,7 +48,7 @@ fn test_serial_output_test_rom(rom_bytes: &[u8], check_fn: impl CheckFn + 'stati
         .set_model(Model::Dmg)
         .set_boot_rom(Some(DMG_BOOT_ROM));
 
-    let mut gb = GameBoy::new(rom, &config)?;
+    let mut gb = GameBoy::new(rom, None, &config)?;
 
     let buf = Rr::default();
     let completed = Rr::default();

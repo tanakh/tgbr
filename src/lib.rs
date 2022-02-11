@@ -4,6 +4,7 @@ pub mod apu;
 pub mod bus;
 pub mod config;
 pub mod consts;
+pub mod context;
 pub mod cpu;
 pub mod gameboy;
 pub mod interface;
