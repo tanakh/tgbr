@@ -16,7 +16,7 @@ ciborium = "0.2.0"
 env_logger = "0.9.0"
 log = "0.4.14"
 prettytable-rs = "0.8.0"
-sdl2 = { version = "0.35.2", features = ["ttf"] }
+sdl2 = { version = "0.35.2", features = ["ttf", "unsafe_textures"] }
 tempfile = "3.3.0"
 zip = "0.5.13"
 

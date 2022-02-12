@@ -98,6 +98,7 @@ pub enum HotKey {
     StateLoad,
     NextSlot,
     PrevSlot,
+    Rewind,
     FullScreen,
 }
 
@@ -113,6 +114,13 @@ impl Default for HotKeys {
             (StateLoad, all![kbd!(LCtrl), kbd!(L)]),
             (NextSlot, all![kbd!(LCtrl), kbd!(N)]),
             (PrevSlot, all![kbd!(LCtrl), kbd!(P)]),
+            (
+                Rewind,
+                any![
+                    kbd!(Backspace),
+                    all![pad_axis!(0, TriggerLeft), pad_axis!(0, TriggerRight)]
+                ],
+            ),
             (FullScreen, all![kbd!(RAlt), kbd!(Return)]),
         ])
     }
