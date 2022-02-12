@@ -2,7 +2,10 @@ use bitvec::prelude::*;
 use log::{debug, log_enabled, trace, Level};
 use serde::{Deserialize, Serialize};
 
-use crate::{context, util::ConstEval};
+use crate::{
+    context,
+    util::{trait_alias, ConstEval},
+};
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Cpu {
@@ -14,8 +17,7 @@ pub struct Cpu {
     period: u64,
 }
 
-pub trait Context: context::Bus + context::InterruptFlag {}
-impl<T: context::Bus + context::InterruptFlag> Context for T {}
+trait_alias!(pub trait Context = context::Bus + context::InterruptFlag);
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Register {

@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     context,
     rom::{self, Rom},
+    util::trait_alias,
 };
 
-pub trait Context: context::Rom {}
-impl<T: context::Rom> Context for T {}
+trait_alias!(pub trait Context = context::Rom);
 
 #[derive(Serialize, Deserialize)]
 pub struct NullMbc {}

@@ -8,11 +8,10 @@ use crate::{
     },
     context,
     interface::{Color, FrameBuffer},
-    util::pack,
+    util::{pack, trait_alias},
 };
 
-pub trait Context: context::Vram + context::InterruptFlag {}
-impl<T: context::Vram + context::InterruptFlag> Context for T {}
+trait_alias!(pub trait Context = context::InterruptFlag);
 
 const MODE_HBLANK: u8 = 0;
 const MODE_VBLANK: u8 = 1;
@@ -56,6 +55,8 @@ pub struct Ppu {
     window_rendering_counter: u8,
 
     #[serde(with = "serde_bytes")]
+    vram: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     oam: Vec<u8>,
     dmg_palette: [Color; 4],
 
@@ -71,6 +72,7 @@ pub struct Ppu {
 impl Ppu {
     pub fn new(dmg_palette: &[Color; 4]) -> Self {
         Self {
+            vram: vec![0; 0x2000],
             oam: vec![0; 0xA0],
             line_buffer: vec![0; SCREEN_WIDTH as usize],
             line_buffer_attr: vec![0; SCREEN_WIDTH as usize],
@@ -132,7 +134,7 @@ impl Ppu {
                 ctx.set_interrupt_flag_bit(INT_VBLANK);
             }
             if mode == MODE_TRANSFER {
-                self.render_line(ctx);
+                self.render_line();
             }
         }
         self.mode = mode;
@@ -300,6 +302,24 @@ impl Ppu {
         }
     }
 
+    pub fn read_vram(&self, addr: u16) -> u8 {
+        if !self.vram_locked() {
+            self.vram[addr as usize]
+        } else {
+            !0
+        }
+    }
+
+    pub fn write_vram(&mut self, addr: u16, data: u8) {
+        if !self.vram_locked() {
+            self.vram[addr as usize] = data
+        }
+    }
+
+    fn vram_locked(&self) -> bool {
+        self.mode == MODE_TRANSFER
+    }
+
     pub fn read_oam(&self, addr: u8) -> u8 {
         if !self.oam_locked() {
             self.oam[addr as usize]
@@ -320,14 +340,14 @@ impl Ppu {
 }
 
 impl Ppu {
-    fn render_line(&mut self, ctx: &mut impl Context) {
+    fn render_line(&mut self) {
         self.line_buffer.fill(0);
         self.line_buffer_attr.fill(ATTR_NONE);
         if self.ppu_enable && self.bg_and_window_enable {
-            self.render_bg_line(ctx);
+            self.render_bg_line();
         }
         if self.ppu_enable && self.obj_enable {
-            self.render_obj_line(ctx);
+            self.render_obj_line();
         }
         let y = self.ly as usize;
         for x in 0..SCREEN_WIDTH as usize {
@@ -337,7 +357,7 @@ impl Ppu {
         }
     }
 
-    fn render_bg_line(&mut self, ctx: &mut impl Context) {
+    fn render_bg_line(&mut self) {
         let tile_data: u16 = if self.bg_and_window_tile_data_select {
             0x0000
         } else {
@@ -378,15 +398,15 @@ impl Ppu {
             let ofs_x = x as u16 % 8;
             let ofs_y = y as u16 % 8;
 
-            let tile_ix = ctx.read_vram(tile_map + tile_y * 32 + tile_x, true);
+            let tile_ix = self.vram[(tile_map + tile_y * 32 + tile_x) as usize];
 
             let mut tile_addr = tile_data + (tile_ix as u16 * 16);
             if tile_addr >= 0x1800 {
                 tile_addr -= 0x1000;
             }
 
-            let lo = ctx.read_vram(tile_addr + ofs_y * 2, true);
-            let hi = ctx.read_vram(tile_addr + ofs_y * 2 + 1, true);
+            let lo = self.vram[(tile_addr + ofs_y * 2) as usize];
+            let hi = self.vram[(tile_addr + ofs_y * 2 + 1) as usize];
 
             let b = (lo >> (7 - ofs_x)) & 1 | ((hi >> (7 - ofs_x)) & 1) << 1;
 
@@ -399,7 +419,7 @@ impl Ppu {
         }
     }
 
-    fn render_obj_line(&mut self, ctx: &mut impl Context) {
+    fn render_obj_line(&mut self) {
         let w = self.line_buffer.len();
 
         let obj_size = if self.obj_size { 16 } else { 8 };
@@ -454,8 +474,8 @@ impl Ppu {
                     + (ofs_y & 7) as u16 * 2
             };
 
-            let lo = ctx.read_vram(tile_addr, true);
-            let hi = ctx.read_vram(tile_addr + 1, true);
+            let lo = self.vram[tile_addr as usize];
+            let hi = self.vram[(tile_addr + 1) as usize];
 
             for ofs_x in 0..8 {
                 let scr_x = x as usize + ofs_x;

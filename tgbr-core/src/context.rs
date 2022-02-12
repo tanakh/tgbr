@@ -27,13 +27,6 @@ pub trait InterruptFlag {
 }
 
 #[delegatable_trait]
-pub trait Vram {
-    fn read_vram(&self, addr: u16, force: bool) -> u8;
-    fn write_vram(&mut self, addr: u16, data: u8, force: bool);
-    fn lock_vram(&mut self, lock: bool);
-}
-
-#[delegatable_trait]
 pub trait Ppu {
     fn ppu(&self) -> &crate::ppu::Ppu;
     fn ppu_mut(&mut self) -> &mut crate::ppu::Ppu;
@@ -61,7 +54,6 @@ pub struct Context {
 
 #[derive(Serialize, Deserialize, Delegate)]
 #[delegate(Apu, target = "inner")]
-#[delegate(Vram, target = "inner")]
 #[delegate(InterruptFlag, target = "inner")]
 pub struct BusContext {
     #[serde(skip)]
@@ -74,8 +66,6 @@ pub struct BusContext {
 #[derive(Serialize, Deserialize)]
 pub struct PpuContext {
     pub apu: crate::apu::Apu,
-    pub vram: Vec<u8>,
-    pub vram_lock: bool,
     pub interrupt_enable: u8,
     pub interrupt_flag: u8,
 }
@@ -94,8 +84,6 @@ impl Context {
                 ppu,
                 inner: PpuContext {
                     apu,
-                    vram: vec![0; 0x2000],
-                    vram_lock: false,
                     interrupt_enable: 0,
                     interrupt_flag: 0,
                 },
@@ -164,23 +152,5 @@ impl InterruptFlag for PpuContext {
     }
     fn set_interrupt_flag(&mut self, data: u8) {
         self.interrupt_flag = data;
-    }
-}
-
-impl Vram for PpuContext {
-    fn read_vram(&self, addr: u16, force: bool) -> u8 {
-        if force || !self.vram_lock {
-            self.vram[addr as usize]
-        } else {
-            !0
-        }
-    }
-    fn write_vram(&mut self, addr: u16, data: u8, force: bool) {
-        if force || !self.vram_lock {
-            self.vram[addr as usize] = data;
-        }
-    }
-    fn lock_vram(&mut self, lock: bool) {
-        self.vram_lock = lock;
     }
 }

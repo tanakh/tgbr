@@ -2,7 +2,12 @@ use bitvec::prelude::*;
 use log::trace;
 use serde::{Deserialize, Serialize};
 
-use crate::{consts::INT_SERIAL, context, interface::LinkCable, util::pack};
+use crate::{
+    consts::INT_SERIAL,
+    context,
+    interface::LinkCable,
+    util::{pack, trait_alias},
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct SerialTransfer {
@@ -16,8 +21,7 @@ pub struct SerialTransfer {
     link_cable: Option<Box<dyn LinkCable>>,
 }
 
-pub trait Context: context::InterruptFlag {}
-impl<T: context::InterruptFlag> Context for T {}
+trait_alias!(pub trait Context = context::InterruptFlag);
 
 impl SerialTransfer {
     pub fn new() -> Self {

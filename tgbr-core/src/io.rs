@@ -7,11 +7,10 @@ use crate::{
     context,
     interface::{Input, LinkCable},
     serial::SerialTransfer,
-    util::pack,
+    util::{pack, trait_alias},
 };
 
-pub trait Context: context::InterruptFlag + context::Ppu + context::Apu {}
-impl<T: context::InterruptFlag + context::Ppu + context::Apu> Context for T {}
+trait_alias!(pub trait Context = context::InterruptFlag + context::Ppu + context::Apu);
 
 #[derive(Serialize, Deserialize)]
 pub struct Io {

@@ -1,7 +1,7 @@
 use log::{trace, warn};
 use serde::{Deserialize, Serialize};
 
-use crate::{context, io::Io, mbc::Mbc};
+use crate::{context, io::Io, mbc::Mbc, util::trait_alias};
 
 #[derive(Serialize, Deserialize)]
 pub struct Bus {
@@ -17,14 +17,7 @@ pub struct Bus {
     dma: Dma,
 }
 
-pub trait Context:
-    context::Rom + context::Vram + context::Ppu + context::Apu + context::InterruptFlag
-{
-}
-impl<T: context::Rom + context::Vram + context::Ppu + context::Apu + context::InterruptFlag> Context
-    for T
-{
-}
+trait_alias!(pub trait Context = context::Rom + context::Ppu + context::Apu + context::InterruptFlag);
 
 #[derive(Default, Serialize, Deserialize)]
 struct Dma {
@@ -76,7 +69,7 @@ impl Bus {
                 }
             }
             0x0100..=0x7fff => self.mbc.read(ctx, addr),
-            0x8000..=0x9fff => ctx.read_vram(addr & 0x1fff, false),
+            0x8000..=0x9fff => ctx.ppu().read_vram(addr & 0x1fff),
             0xa000..=0xbfff => self.mbc.read(ctx, addr),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize],
             0xfe00..=0xfe9f => {
@@ -99,7 +92,7 @@ impl Bus {
         trace!("--> Write: ${addr:04X} = ${data:02X}");
         match addr {
             0x0000..=0x7fff => self.mbc.write(ctx, addr, data),
-            0x8000..=0x9fff => ctx.write_vram(addr & 0x1fff, data, false),
+            0x8000..=0x9fff => ctx.ppu_mut().write_vram(addr & 0x1fff, data),
             0xa000..=0xbfff => self.mbc.write(ctx, addr, data),
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize] = data,
             0xfe00..=0xfe9f => {
