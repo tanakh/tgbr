@@ -321,7 +321,8 @@ impl Ppu {
     }
 
     fn vram_locked(&self) -> bool {
-        self.mode == MODE_TRANSFER
+        // self.mode == MODE_TRANSFER
+        false
     }
 
     pub fn read_oam(&self, addr: u8) -> u8 {
