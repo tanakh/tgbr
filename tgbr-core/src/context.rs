@@ -10,6 +10,24 @@ pub trait Bus {
 }
 
 #[delegatable_trait]
+pub trait Ppu {
+    fn ppu(&self) -> &crate::ppu::Ppu;
+    fn ppu_mut(&mut self) -> &mut crate::ppu::Ppu;
+}
+
+#[delegatable_trait]
+pub trait Apu {
+    fn apu(&self) -> &crate::apu::Apu;
+    fn apu_mut(&mut self) -> &mut crate::apu::Apu;
+}
+
+#[delegatable_trait]
+pub trait Rom {
+    fn rom(&self) -> &crate::rom::Rom;
+    fn rom_mut(&mut self) -> &mut crate::rom::Rom;
+}
+
+#[delegatable_trait]
 pub trait InterruptFlag {
     fn interrupt_enable(&mut self) -> u8;
     fn set_interrupt_enable(&mut self, data: u8);
@@ -26,50 +44,6 @@ pub trait InterruptFlag {
     }
 }
 
-#[delegatable_trait]
-pub trait Ppu {
-    fn ppu(&self) -> &crate::ppu::Ppu;
-    fn ppu_mut(&mut self) -> &mut crate::ppu::Ppu;
-}
-
-#[delegatable_trait]
-pub trait Apu {
-    fn apu(&self) -> &crate::apu::Apu;
-    fn apu_mut(&mut self) -> &mut crate::apu::Apu;
-}
-
-pub trait Rom {
-    fn rom(&self) -> &crate::rom::Rom;
-}
-
-#[derive(Serialize, Deserialize, Delegate)]
-#[delegate(Ppu, target = "inner")]
-#[delegate(Apu, target = "inner")]
-#[delegate(InterruptFlag, target = "inner")]
-pub struct Context {
-    pub bus: crate::bus::Bus,
-    #[serde(flatten)]
-    pub inner: BusContext,
-}
-
-#[derive(Serialize, Deserialize, Delegate)]
-#[delegate(Apu, target = "inner")]
-#[delegate(InterruptFlag, target = "inner")]
-pub struct BusContext {
-    #[serde(skip)]
-    pub rom: crate::rom::Rom,
-    pub ppu: crate::ppu::Ppu,
-    #[serde(flatten)]
-    pub inner: PpuContext,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct PpuContext {
-    pub apu: crate::apu::Apu,
-    pub interrupt_enable: u8,
-    pub interrupt_flag: u8,
-}
-
 impl Context {
     pub fn new(
         bus: crate::bus::Bus,
@@ -79,11 +53,11 @@ impl Context {
     ) -> Self {
         Self {
             bus,
-            inner: BusContext {
+            inner: InnerContext1 {
                 rom,
                 ppu,
-                inner: PpuContext {
-                    apu,
+                apu,
+                inner: InnerContext2 {
                     interrupt_enable: 0,
                     interrupt_flag: 0,
                 },
@@ -92,12 +66,23 @@ impl Context {
     }
 }
 
+#[derive(Serialize, Deserialize, Delegate)]
+#[delegate(Rom, target = "inner")]
+#[delegate(Ppu, target = "inner")]
+#[delegate(Apu, target = "inner")]
+#[delegate(InterruptFlag, target = "inner")]
+pub struct Context {
+    pub bus: crate::bus::Bus,
+    #[serde(flatten)]
+    pub inner: InnerContext1,
+}
+
 impl Bus for Context {
     fn tick(&mut self) {
         self.bus.tick(&mut self.inner);
         for _ in 0..4 {
             self.inner.ppu.tick(&mut self.inner.inner);
-            self.inner.inner.apu.tick();
+            self.inner.apu.tick();
         }
         self.bus.io().serial().tick(&mut self.inner);
         self.bus.io().tick(&mut self.inner);
@@ -116,13 +101,27 @@ impl Bus for Context {
     }
 }
 
-impl Rom for BusContext {
+#[derive(Serialize, Deserialize, Delegate)]
+#[delegate(InterruptFlag, target = "inner")]
+pub struct InnerContext1 {
+    #[serde(skip)]
+    rom: crate::rom::Rom,
+    ppu: crate::ppu::Ppu,
+    apu: crate::apu::Apu,
+    #[serde(flatten)]
+    inner: InnerContext2,
+}
+
+impl Rom for InnerContext1 {
     fn rom(&self) -> &crate::rom::Rom {
         &self.rom
     }
+    fn rom_mut(&mut self) -> &mut crate::rom::Rom {
+        &mut self.rom
+    }
 }
 
-impl Ppu for BusContext {
+impl Ppu for InnerContext1 {
     fn ppu(&self) -> &crate::ppu::Ppu {
         &self.ppu
     }
@@ -131,7 +130,7 @@ impl Ppu for BusContext {
     }
 }
 
-impl Apu for PpuContext {
+impl Apu for InnerContext1 {
     fn apu(&self) -> &crate::apu::Apu {
         &self.apu
     }
@@ -140,7 +139,13 @@ impl Apu for PpuContext {
     }
 }
 
-impl InterruptFlag for PpuContext {
+#[derive(Serialize, Deserialize)]
+pub struct InnerContext2 {
+    interrupt_enable: u8,
+    interrupt_flag: u8,
+}
+
+impl InterruptFlag for InnerContext2 {
     fn interrupt_enable(&mut self) -> u8 {
         self.interrupt_enable
     }

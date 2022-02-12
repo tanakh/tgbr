@@ -328,8 +328,8 @@ impl Ppu {
         }
     }
 
-    pub fn write_oam(&mut self, addr: u8, data: u8) {
-        if !self.oam_locked() {
+    pub fn write_oam(&mut self, addr: u8, data: u8, force: bool) {
+        if force || !self.oam_locked() {
             self.oam[addr as usize] = data
         }
     }

@@ -1,7 +1,12 @@
 use log::{trace, warn};
 use serde::{Deserialize, Serialize};
 
-use crate::{context, io::Io, mbc::Mbc, util::trait_alias};
+use crate::{
+    context,
+    io::Io,
+    mbc::{Mbc, MbcTrait},
+    util::trait_alias,
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct Bus {
@@ -97,7 +102,7 @@ impl Bus {
             0xc000..=0xfdff => self.ram[(addr & 0x1fff) as usize] = data,
             0xfe00..=0xfe9f => {
                 if !self.dma.enabled {
-                    ctx.ppu_mut().write_oam((addr & 0xff) as u8, data)
+                    ctx.ppu_mut().write_oam((addr & 0xff) as u8, data, false)
                 }
             }
             0xfea0..=0xfeff => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
@@ -146,7 +151,7 @@ impl Bus {
             self.dma.pos
         );
         let data = self.read_(ctx, (self.dma.source as u16) << 8 | self.dma.pos as u16);
-        ctx.ppu_mut().write_oam(self.dma.pos, data);
+        ctx.ppu_mut().write_oam(self.dma.pos, data, true);
         self.dma.pos += 1;
         if self.dma.pos == 0xA0 {
             self.dma.enabled = false;

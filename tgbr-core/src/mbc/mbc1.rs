@@ -47,8 +47,10 @@ impl Mbc1 {
             banking_mode: false,
         }
     }
+}
 
-    pub fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
+impl super::MbcTrait for Mbc1 {
+    fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
         // TODO: Advanced ROM Banking Mode
         match addr {
             0x0000..=0x3FFF => ctx.rom().data[addr as usize],
@@ -64,7 +66,7 @@ impl Mbc1 {
         }
     }
 
-    pub fn write(&mut self, _ctx: &mut impl Context, addr: u16, data: u8) {
+    fn write(&mut self, _ctx: &mut impl Context, addr: u16, data: u8) {
         match addr {
             0x0000..=0x1FFF => self.ram_enable = data & 0x0F == 0x0A,
             0x2000..=0x3FFF => self.rom_bank.view_bits_mut::<Lsb0>()[0..=4]
@@ -82,7 +84,7 @@ impl Mbc1 {
         }
     }
 
-    pub fn backup_ram(&self, ctx: &mut impl Context) -> Option<&[u8]> {
+    fn backup_ram(&self, ctx: &mut impl Context) -> Option<&[u8]> {
         if ctx.rom().cartridge_type.has_battery {
             Some(&self.ram)
         } else {

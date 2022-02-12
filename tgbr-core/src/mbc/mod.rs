@@ -1,5 +1,6 @@
 mod mbc1;
 
+use ambassador::{delegatable_trait, Delegate};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -10,73 +11,50 @@ use crate::{
 
 trait_alias!(pub trait Context = context::Rom);
 
+#[allow(unused_variables)]
+#[delegatable_trait]
+pub trait MbcTrait {
+    fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8;
+    fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {}
+    fn backup_ram(&self, ctx: &mut impl Context) -> Option<&[u8]> {
+        None
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct NullMbc {}
 
 impl NullMbc {
-    pub fn new(rom: &Rom, _backup_ram: Option<Vec<u8>>) -> Self {
+    fn new(rom: &Rom, _backup_ram: Option<Vec<u8>>) -> Self {
         assert_eq!(
             rom.rom_size,
             32 * 1024,
             "ROM only cartridge should be 32KiB"
         );
         assert_eq!(rom.ram_size, 0, "Currently ROM+RAM cartridge not supported");
-
         Self {}
     }
+}
 
-    pub fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
+impl MbcTrait for NullMbc {
+    fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
         match addr {
             0x0000..=0x3fff => ctx.rom().data[addr as usize],
             0x4000..=0x7fff => ctx.rom().data[addr as usize],
             _ => unreachable!("{:04X}", addr),
         }
     }
-
-    pub fn write(&mut self, _ctx: &mut impl Context, _addr: u16, _data: u8) {}
-
-    pub fn backup_ram(&self, _ctx: &mut impl Context) -> Option<&[u8]> {
-        None
-    }
 }
 
 macro_rules! def_mbc {
     ($($id:ident => $ty:ty,)*) => {
-        #[derive(Serialize, Deserialize)]
+        #[derive(Serialize, Deserialize, Delegate)]
+        #[delegate(MbcTrait)]
         pub enum Mbc {
             NullMbc(NullMbc),
             $(
                 $id($ty),
             )*
-        }
-
-        impl Mbc {
-            pub fn read(&mut self,  ctx: &mut impl Context, addr: u16) -> u8 {
-                match self {
-                    Mbc::NullMbc(mbc) => mbc.read(ctx, addr),
-                    $(
-                        Mbc::$id(mbc) => mbc.read(ctx, addr),
-                    )*
-                }
-            }
-
-            pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
-                match self {
-                    Mbc::NullMbc(mbc) => mbc.write(ctx, addr, data),
-                    $(
-                        Mbc::$id(mbc) => mbc.write(ctx, addr, data),
-                    )*
-                }
-            }
-
-            pub fn backup_ram(&self, ctx: &mut impl Context) -> Option<&[u8]> {
-                match self {
-                    Mbc::NullMbc(mbc) => mbc.backup_ram(ctx),
-                    $(
-                        Mbc::$id(mbc) => mbc.backup_ram(ctx),
-                    )*
-                }
-            }
         }
 
         pub fn create_mbc(rom: &Rom, backup_ram: Option<Vec<u8>>) -> Mbc {

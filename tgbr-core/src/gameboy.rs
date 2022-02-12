@@ -9,7 +9,7 @@ use crate::{
     cpu::Cpu,
     interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable},
     io::Io,
-    mbc::create_mbc,
+    mbc::{create_mbc, MbcTrait},
     ppu::Ppu,
     rom::{CgbFlag, Rom},
 };
@@ -30,14 +30,6 @@ impl GameBoy {
             sha2::Sha256::digest(&rom.data).into()
         };
 
-        let cpu = Cpu::new();
-        let ppu = Ppu::new(&config.dmg_palette);
-        let apu = Apu::new();
-        let io = Io::new();
-        let mbc = create_mbc(&rom, backup_ram);
-        let bus = Bus::new(mbc, &config.boot_rom, io);
-
-        // Set up the contents of registers after internal ROM execution
         let model = match rom.cgb_flag {
             CgbFlag::NonCgb => {
                 if config.model == Model::Auto {
@@ -62,11 +54,15 @@ impl GameBoy {
             }
         };
 
+        let io = Io::new();
+        let mbc = create_mbc(&rom, backup_ram);
+        let bus = Bus::new(mbc, &config.boot_rom, io);
+
         let mut ret = Self {
-            cpu,
+            cpu: Cpu::new(),
             rom_hash,
             model,
-            ctx: Context::new(bus, rom, ppu, apu),
+            ctx: Context::new(bus, rom, Ppu::new(&config.dmg_palette), Apu::new()),
         };
 
         if !config.boot_rom.is_some() {
@@ -160,6 +156,7 @@ impl GameBoy {
     }
 
     pub fn load_state(&mut self, data: &[u8]) -> Result<()> {
+        use context::*;
         // TODO: limitation: cannot restore connector
 
         // Deserialize object
@@ -169,9 +166,10 @@ impl GameBoy {
         if self.rom_hash != gb.rom_hash {
             bail!("ROM hash mismatch");
         }
-        std::mem::swap(&mut self.ctx.inner.rom, &mut gb.ctx.inner.rom);
 
+        std::mem::swap(self.ctx.rom_mut(), gb.ctx.rom_mut());
         *self = gb;
+
         Ok(())
     }
 }
