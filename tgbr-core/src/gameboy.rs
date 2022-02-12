@@ -2,21 +2,14 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    apu::Apu,
-    bus::Bus,
     config::{Config, Model},
     context::{self, Context},
-    cpu::Cpu,
     interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable},
-    io::Io,
-    mbc::{create_mbc, MbcTrait},
-    ppu::Ppu,
     rom::{CgbFlag, Rom},
 };
 
 #[derive(Serialize, Deserialize)]
 pub struct GameBoy {
-    cpu: Cpu,
     rom_hash: [u8; 32],
     model: Model,
     #[serde(flatten)]
@@ -54,15 +47,10 @@ impl GameBoy {
             }
         };
 
-        let io = Io::new();
-        let mbc = create_mbc(&rom, backup_ram);
-        let bus = Bus::new(mbc, &config.boot_rom, io);
-
         let mut ret = Self {
-            cpu: Cpu::new(),
             rom_hash,
             model,
-            ctx: Context::new(bus, rom, Ppu::new(&config.dmg_palette), Apu::new()),
+            ctx: Context::new(rom, &config.boot_rom, backup_ram, &config.dmg_palette),
         };
 
         if !config.boot_rom.is_some() {
@@ -77,7 +65,7 @@ impl GameBoy {
     fn setup_initial_state(&mut self) {
         match self.model {
             Model::Dmg => {
-                let reg = self.cpu.register();
+                let reg = self.ctx.cpu.register();
                 reg.a = 0x01;
                 reg.f.unpack(0xB0);
                 reg.b = 0x00;
@@ -90,7 +78,7 @@ impl GameBoy {
                 reg.pc = 0x0100;
             }
             Model::Cgb => {
-                let reg = self.cpu.register();
+                let reg = self.ctx.cpu.register();
                 reg.a = 0x11;
                 reg.f.unpack(0x80);
                 reg.b = 0x00;
@@ -106,6 +94,19 @@ impl GameBoy {
         }
     }
 
+    pub fn reset(&mut self) {
+        use context::*;
+
+        let backup_ram = self.backup_ram();
+        let mut rom = crate::rom::Rom::default();
+        std::mem::swap(&mut rom, self.ctx.rom_mut());
+
+        let boot_rom = self.ctx.inner.bus.boot_rom();
+        let dmg_palette = self.ctx.ppu().dmg_palette();
+
+        self.ctx = Context::new(rom, boot_rom, backup_ram, dmg_palette);
+    }
+
     pub fn exec_frame(&mut self) {
         use context::*;
 
@@ -113,7 +114,7 @@ impl GameBoy {
 
         let start_frame = self.ctx.ppu().frame();
         while start_frame == self.ctx.ppu().frame() {
-            self.cpu.step(&mut self.ctx);
+            self.ctx.cpu.step(&mut self.ctx.inner);
         }
     }
 
@@ -123,7 +124,8 @@ impl GameBoy {
     }
 
     pub fn set_input(&mut self, input: &Input) {
-        self.ctx.bus.io().set_input(&mut self.ctx.inner, input);
+        let io = self.ctx.inner.bus.io();
+        io.set_input(&mut self.ctx.inner.inner, input);
     }
 
     pub fn frame_buffer(&self) -> &FrameBuffer {
@@ -137,16 +139,15 @@ impl GameBoy {
     }
 
     pub fn backup_ram(&mut self) -> Option<Vec<u8>> {
-        self.ctx
-            .bus
-            .mbc()
-            .backup_ram(&mut self.ctx.inner)
+        use crate::mbc::MbcTrait;
+        let mbc = self.ctx.inner.bus.mbc();
+        mbc.backup_ram(&mut self.ctx.inner.inner)
             .map(|r| r.to_owned())
     }
 
     pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + 'static>) {
         let link_cable = link_cable.map(|r| Box::new(r) as Box<dyn LinkCable>);
-        self.ctx.bus.io().set_link_cable(link_cable);
+        self.ctx.inner.bus.io().set_link_cable(link_cable);
     }
 
     pub fn save_state(&self) -> Vec<u8> {

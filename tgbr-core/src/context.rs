@@ -1,6 +1,8 @@
 use ambassador::{delegatable_trait, Delegate};
 use serde::{Deserialize, Serialize};
 
+use crate::{interface::Color, mbc::create_mbc};
+
 #[delegatable_trait]
 pub trait Bus {
     fn tick(&mut self);
@@ -46,20 +48,27 @@ pub trait InterruptFlag {
 
 impl Context {
     pub fn new(
-        bus: crate::bus::Bus,
         rom: crate::rom::Rom,
-        ppu: crate::ppu::Ppu,
-        apu: crate::apu::Apu,
+        boot_rom: &Option<Vec<u8>>,
+        backup_ram: Option<Vec<u8>>,
+        dmg_palette: &[Color; 4],
     ) -> Self {
+        let io = crate::io::Io::new();
+        let mbc = create_mbc(&rom, backup_ram);
+        let bus = crate::bus::Bus::new(mbc, boot_rom, io);
+
         Self {
-            bus,
-            inner: InnerContext1 {
-                rom,
-                ppu,
-                apu,
-                inner: InnerContext2 {
-                    interrupt_enable: 0,
-                    interrupt_flag: 0,
+            cpu: crate::cpu::Cpu::new(),
+            inner: InnerContext0 {
+                bus,
+                inner: InnerContext1 {
+                    rom,
+                    ppu: crate::ppu::Ppu::new(dmg_palette),
+                    apu: crate::apu::Apu::new(),
+                    inner: InnerContext2 {
+                        interrupt_enable: 0,
+                        interrupt_flag: 0,
+                    },
                 },
             },
         }
@@ -72,12 +81,23 @@ impl Context {
 #[delegate(Apu, target = "inner")]
 #[delegate(InterruptFlag, target = "inner")]
 pub struct Context {
+    pub cpu: crate::cpu::Cpu,
+    #[serde(flatten)]
+    pub inner: InnerContext0,
+}
+
+#[derive(Serialize, Deserialize, Delegate)]
+#[delegate(Rom, target = "inner")]
+#[delegate(Ppu, target = "inner")]
+#[delegate(Apu, target = "inner")]
+#[delegate(InterruptFlag, target = "inner")]
+pub struct InnerContext0 {
     pub bus: crate::bus::Bus,
     #[serde(flatten)]
     pub inner: InnerContext1,
 }
 
-impl Bus for Context {
+impl Bus for InnerContext0 {
     fn tick(&mut self) {
         self.bus.tick(&mut self.inner);
         for _ in 0..4 {

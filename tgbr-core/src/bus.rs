@@ -15,7 +15,7 @@ pub struct Bus {
     #[serde(with = "serde_bytes")]
     hiram: Vec<u8>,
     #[serde(with = "serde_bytes")]
-    boot_rom: Vec<u8>,
+    boot_rom: Option<Vec<u8>>,
     map_boot_rom: bool,
     mbc: Mbc,
     io: Io,
@@ -41,9 +41,7 @@ impl Bus {
         Self {
             ram: vec![0; 0x2000],
             hiram: vec![0; 0x7F],
-            boot_rom: boot_rom
-                .as_ref()
-                .map_or_else(|| vec![0; 0x100], |r| r.clone()),
+            boot_rom: boot_rom.clone(),
             map_boot_rom: boot_rom.is_some(),
             mbc,
             io,
@@ -68,7 +66,11 @@ impl Bus {
         match addr {
             0x0000..=0x00FF => {
                 if self.map_boot_rom {
-                    self.boot_rom[addr as usize]
+                    if let Some(boot_rom) = &self.boot_rom {
+                        boot_rom[addr as usize]
+                    } else {
+                        !0
+                    }
                 } else {
                     self.mbc.read(ctx, addr)
                 }
@@ -127,6 +129,10 @@ impl Bus {
 
     pub fn mbc(&mut self) -> &mut Mbc {
         &mut self.mbc
+    }
+
+    pub fn boot_rom(&self) -> &Option<Vec<u8>> {
+        &self.boot_rom
     }
 
     pub fn tick(&mut self, ctx: &mut impl Context) {

@@ -139,7 +139,13 @@ fn main(
     while process_events(&mut event_pump) {
         input_manager.update(&event_pump);
         let input = input_manager.input();
+
         let is_turbo = input_manager.hotkey(HotKey::Turbo).pressed();
+
+        if input_manager.hotkey(HotKey::Reset).pushed() {
+            gb.reset();
+            info!("Reset machine");
+        }
 
         if input_manager.hotkey(HotKey::StateSave).pushed() {
             let data = gb.save_state();
@@ -152,6 +158,16 @@ fn main(
             if let Err(e) = res {
                 error!("Failed to load state: {}", e);
             }
+        }
+
+        if input_manager.hotkey(HotKey::NextSlot).pushed() {
+            state_save_slot += 1;
+            info!("State save slot changed: {}", state_save_slot);
+        }
+
+        if input_manager.hotkey(HotKey::PrevSlot).pushed() {
+            state_save_slot = state_save_slot.saturating_sub(1);
+            info!("State save slot changed: {}", state_save_slot);
         }
 
         gb.set_input(&input);

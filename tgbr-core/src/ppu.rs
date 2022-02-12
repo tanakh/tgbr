@@ -81,6 +81,10 @@ impl Ppu {
         }
     }
 
+    pub fn dmg_palette(&self) -> &[Color; 4] {
+        &self.dmg_palette
+    }
+
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
         self.dmg_palette = palette.clone();
     }

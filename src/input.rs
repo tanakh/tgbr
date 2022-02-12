@@ -92,9 +92,12 @@ impl Default for KeyConfig {
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum HotKey {
+    Reset,
     Turbo,
     StateSave,
     StateLoad,
+    NextSlot,
+    PrevSlot,
     FullScreen,
 }
 
@@ -104,9 +107,12 @@ impl Default for HotKeys {
     fn default() -> Self {
         use HotKey::*;
         Self(vec![
+            (Reset, all![kbd!(LCtrl), kbd!(R)]),
             (Turbo, any![kbd!(Tab), pad_axis!(0, TriggerLeft)]),
             (StateSave, all![kbd!(LCtrl), kbd!(S)]),
             (StateLoad, all![kbd!(LCtrl), kbd!(L)]),
+            (NextSlot, all![kbd!(LCtrl), kbd!(N)]),
+            (PrevSlot, all![kbd!(LCtrl), kbd!(P)]),
             (FullScreen, all![kbd!(RAlt), kbd!(Return)]),
         ])
     }
