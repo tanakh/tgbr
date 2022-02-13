@@ -80,27 +80,25 @@ enum AppState {
 }
 
 struct App {
-    state: AppState,
     gb: GameBoy,
-    width: usize,
-    height: usize,
-    screen_width: usize,
-    screen_height: usize,
     rom_file: PathBuf,
 
+    state: AppState,
     frames: usize,
     timer: timer::Timer,
     state_save_slot: usize,
     auto_saved_states: VecDeque<AutoSavedState>,
-
     rewind_pos: usize,
 
-    sdl_context: sdl2::Sdl,
+    show_fps: bool,
+
+    screen_width: usize,
+    screen_height: usize,
     canvas: sdl2::render::Canvas<sdl2::video::Window>,
     surface: sdl2::surface::Surface<'static>,
     texture_creator: sdl2::render::TextureCreator<sdl2::video::WindowContext>,
-    event_pump: EventPump,
     audio_queue: AudioQueue<i16>,
+    event_pump: EventPump,
     input_manager: InputManager,
 }
 
@@ -145,12 +143,7 @@ impl App {
             .window("TGB-R", screen_width as u32, screen_height as u32)
             .build()?;
 
-        let mut canvas = window.into_canvas().present_vsync().build()?;
-
-        canvas.set_draw_color(Color::RGB(0, 0, 0));
-        canvas.clear();
-        canvas.present();
-
+        let canvas = window.into_canvas().present_vsync().build()?;
         let texture_creator = canvas.texture_creator();
 
         let surface =
@@ -177,24 +170,25 @@ impl App {
         let event_pump = sdl_context.event_pump().map_err(|e| anyhow!("{e}"))?;
 
         Ok(Self {
-            state: AppState::Running,
             gb,
-            width,
-            height,
-            screen_width,
-            screen_height,
             rom_file: rom_file.to_owned(),
+
+            state: AppState::Running,
             frames: 0,
             timer: timer::Timer::new(),
             state_save_slot: 0,
             auto_saved_states: VecDeque::new(),
             rewind_pos: 0,
-            sdl_context,
+
+            show_fps: true,
+
+            screen_width,
+            screen_height,
             canvas,
             surface,
             texture_creator,
-            event_pump,
             audio_queue,
+            event_pump,
             input_manager,
         })
     }
@@ -309,27 +303,15 @@ impl App {
         let is_turbo = self.input_manager.hotkey(HotKey::Turbo).pressed();
 
         if !is_turbo || self.frames % FRAME_SKIP_ON_TURBO == 0 {
-            self.surface.with_lock_mut(|r| {
-                let buf = self.gb.frame_buffer();
-                for y in 0..buf.height {
-                    for x in 0..buf.width {
-                        let ix = y * buf.width + x;
-                        let p = buf.get(x, y);
-                        r[ix * 3 + 0] = p.r;
-                        r[ix * 3 + 1] = p.g;
-                        r[ix * 3 + 2] = p.b;
-                    }
-                }
-            });
-
-            let texture = self.surface.as_texture(&self.texture_creator)?;
+            let texture = self.to_texture(self.gb.frame_buffer())?;
             self.canvas
                 .copy(&texture, None, None)
                 .map_err(|e| anyhow!("{e}"))?;
             unsafe { texture.destroy() };
 
-            self.render_fps(font)?;
-
+            if self.show_fps {
+                self.render_fps(font)?;
+            }
             self.canvas.present();
         }
 
@@ -338,9 +320,8 @@ impl App {
         }
         self.queue_audio()?;
 
-        self.timer
-            .wait_for_frame(if !is_turbo { 999.9 } else { 999.0 });
-
+        let fps = if !is_turbo { 999.9 } else { 999.0 };
+        self.timer.wait_for_frame(fps);
         Ok(())
     }
 
