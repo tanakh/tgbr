@@ -18,6 +18,6 @@ pub mod util;
 pub use crate::{
     config::{Config, Model},
     gameboy::GameBoy,
-    interface::{AudioBuffer, Color, FrameBuffer, LinkCable},
+    interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable, Pad},
     rom::Rom,
 };

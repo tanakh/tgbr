@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 members = ["tgbr-core"]
 
 [package]
@@ -11,14 +12,19 @@ edition = "2021"
 [dependencies]
 tgbr-core = { path = "tgbr-core" }
 anyhow = "1.0.53"
-argopt = "0.2.0"
+argopt = "0.3.0"
 ciborium = "0.2.0"
 env_logger = "0.9.0"
 log = "0.4.14"
 prettytable-rs = "0.8.0"
-sdl2 = { version = "0.35.2", features = ["ttf", "unsafe_textures"] }
+scopeguard = "1.1.0"
 tempfile = "3.3.0"
 zip = "0.5.13"
+
+bevy = "0.6.1"
+bevy_egui = "0.11.1"
+bevy_kira_audio = "0.8.0"
+rfd = "0.7.0"
 
 [dev-dependencies]
 base64 = "0.13.0"

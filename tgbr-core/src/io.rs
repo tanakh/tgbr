@@ -94,7 +94,7 @@ impl Io {
         &mut self.serial
     }
 
-    pub fn set_link_cable(&mut self, link_cable: Option<Box<dyn LinkCable>>) {
+    pub fn set_link_cable(&mut self, link_cable: Option<Box<dyn LinkCable + Send + Sync>>) {
         self.serial.set_link_cable(link_cable);
     }
 

@@ -18,7 +18,7 @@ pub struct SerialTransfer {
     transfer_timer: u64,
     transfer_pos: usize,
     #[serde(skip)]
-    link_cable: Option<Box<dyn LinkCable>>,
+    link_cable: Option<Box<dyn LinkCable + Send + Sync>>,
 }
 
 trait_alias!(pub trait Context = context::InterruptFlag);
@@ -36,7 +36,7 @@ impl SerialTransfer {
         }
     }
 
-    pub fn set_link_cable(&mut self, link_cable: Option<Box<dyn LinkCable>>) {
+    pub fn set_link_cable(&mut self, link_cable: Option<Box<dyn LinkCable + Send + Sync>>) {
         self.link_cable = link_cable;
     }
 

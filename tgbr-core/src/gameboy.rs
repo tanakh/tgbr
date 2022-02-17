@@ -145,8 +145,8 @@ impl GameBoy {
             .map(|r| r.to_owned())
     }
 
-    pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + 'static>) {
-        let link_cable = link_cable.map(|r| Box::new(r) as Box<dyn LinkCable>);
+    pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + Send + Sync + 'static>) {
+        let link_cable = link_cable.map(|r| Box::new(r) as Box<dyn LinkCable + Send + Sync>);
         self.ctx.inner.bus.io().set_link_cable(link_cable);
     }
 
