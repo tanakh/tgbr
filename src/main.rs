@@ -1,6 +1,6 @@
+mod config;
 mod file;
-// mod input;
-// mod timer;
+mod input;
 
 use anyhow::Result;
 use bevy_kira_audio::{AudioPlugin, AudioStream, AudioStreamPlugin, Frame, StreamedAudio};
@@ -17,16 +17,18 @@ use log::{error, info, log_enabled};
 use std::{
     collections::VecDeque,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-use tgbr_core::{AudioBuffer, Config, GameBoy, Input as GameBoyInput, Pad};
+use tgbr_core::{AudioBuffer, Config, GameBoy, Input as GameBoyInput};
 
+use config::{load_config, load_persistent_state, Palette, PersistentState};
 use file::{load_backup_ram, load_rom, print_rom_info, save_backup_ram};
+use input::{gameboy_input_system, KeyConfig};
 
-const SCALING: usize = 4;
-const FPS: f64 = 60.0;
+// const SCALING: usize = 4;
+// const FPS: f64 = 60.0;
 const FRAME_SKIP_ON_TURBO: usize = 5;
 const AUDIO_FREQUENCY: usize = 48000;
 const AUDIO_BUFFER_SAMPLES: usize = 2048;
@@ -34,40 +36,8 @@ const AUDIO_BUFFER_SAMPLES: usize = 2048;
 const MAX_AUTO_STATE_SAVES: usize = 10 * 60;
 const AUTO_STATE_SAVE_FREQUENCY: usize = 2 * 60;
 
-const DMG_PALETTE: [tgbr_core::Color; 4] = {
-    use tgbr_core::Color;
-    // [
-    //     Color::new(155, 188, 15),
-    //     Color::new(139, 172, 15),
-    //     Color::new(48, 98, 48),
-    //     Color::new(15, 56, 15),
-    // ]
-
-    // [
-    //     Color::new(155, 188, 15),
-    //     Color::new(136, 170, 10),
-    //     Color::new(48, 98, 48),
-    //     Color::new(15, 56, 15),
-    // ]
-
-    // [
-    //     Color::new(160, 207, 10),
-    //     Color::new(140, 191, 10),
-    //     Color::new(46, 115, 32),
-    //     Color::new(0, 63, 0),
-    // ]
-
-    [
-        Color::new(200, 200, 168),
-        Color::new(164, 164, 140),
-        Color::new(104, 104, 84),
-        Color::new(40, 40, 20),
-    ]
-};
-
 use bevy::{
     app::AppExit,
-    input::prelude::*,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::WindowMode,
@@ -102,13 +72,18 @@ fn main(
 
     add_gameboy(&mut app);
 
+    let config = load_config()?;
+
     if let Some(rom_file) = rom_file {
-        let gb = GameBoyState::new(rom_file, boot_rom)?;
+        let gb = GameBoyState::new(rom_file, boot_rom, &config.palette)?;
         app.insert_resource(gb);
         app.add_state(AppState::Running);
     } else {
         app.add_state(AppState::Unloaded);
     }
+
+    app.insert_resource(config);
+    app.insert_resource(load_persistent_state()?);
 
     app.run();
     Ok(())
@@ -132,13 +107,17 @@ struct GameBoyState {
 }
 
 impl GameBoyState {
-    fn new(rom_file: PathBuf, boot_rom: Option<PathBuf>) -> Result<Self> {
-        let rom = load_rom(&rom_file)?;
+    fn new(
+        rom_file: impl AsRef<Path>,
+        boot_rom: Option<PathBuf>,
+        palette: &Palette,
+    ) -> Result<Self> {
+        let rom = load_rom(rom_file.as_ref())?;
         if log_enabled!(log::Level::Info) {
             print_rom_info(&rom.info());
         }
 
-        let backup_ram = load_backup_ram(&rom_file)?;
+        let backup_ram = load_backup_ram(rom_file.as_ref())?;
 
         let boot_rom = if let Some(boot_rom) = boot_rom {
             Some(fs::read(boot_rom)?)
@@ -147,12 +126,15 @@ impl GameBoyState {
         };
 
         let config = Config::default()
-            .set_dmg_palette(&DMG_PALETTE)
+            .set_dmg_palette(palette)
             .set_boot_rom(boot_rom);
 
         let gb = GameBoy::new(rom, backup_ram, &config)?;
 
-        Ok(Self { gb, rom_file })
+        Ok(Self {
+            gb,
+            rom_file: rom_file.as_ref().to_owned(),
+        })
     }
 }
 
@@ -180,106 +162,6 @@ fn add_gameboy(app: &mut App) {
     );
     app.init_resource::<KeyConfig>();
     app.init_resource::<GameBoyInput>();
-}
-
-enum KeyAssign {
-    KeyCode(KeyCode),
-    GamepadButton(GamepadButton),
-    GamepadAxis(GamepadAxis, GamepadAxisDir),
-    All(Vec<KeyAssign>),
-    Any(Vec<KeyAssign>),
-}
-
-enum GamepadAxisDir {
-    Pos,
-    Neg,
-}
-
-impl KeyAssign {
-    fn pressed(&self, input_state: &InputState<'_>) -> bool {
-        match self {
-            KeyAssign::KeyCode(keycode) => input_state.input_keycode.pressed(*keycode),
-            KeyAssign::GamepadButton(button) => input_state.input_gamepad_button.pressed(*button),
-            KeyAssign::GamepadAxis(axis, dir) => {
-                input_state
-                    .input_gamepad_axis
-                    .get(*axis)
-                    .map_or(false, |r| match dir {
-                        GamepadAxisDir::Pos => r >= 0.5,
-                        GamepadAxisDir::Neg => r <= -0.5,
-                    })
-            }
-            KeyAssign::All(ks) => ks.iter().all(|k| k.pressed(input_state)),
-            KeyAssign::Any(ks) => ks.iter().any(|k| k.pressed(input_state)),
-        }
-    }
-}
-
-struct KeyConfig {
-    up: KeyAssign,
-    down: KeyAssign,
-    left: KeyAssign,
-    right: KeyAssign,
-    a: KeyAssign,
-    b: KeyAssign,
-    start: KeyAssign,
-    select: KeyAssign,
-}
-
-macro_rules! keycode {
-    ($code:ident) => {
-        KeyAssign::KeyCode(KeyCode::$code)
-    };
-}
-
-macro_rules! pad_button {
-    ($id:literal, $button:ident) => {
-        KeyAssign::GamepadButton(GamepadButton(Gamepad($id), GamepadButtonType::$button))
-    };
-}
-
-macro_rules! any {
-    ($($assign:expr),* $(,)?) => {
-        KeyAssign::Any(vec![$($assign),*])
-    };
-}
-
-impl Default for KeyConfig {
-    fn default() -> Self {
-        Self {
-            up: any!(keycode!(Up), pad_button!(0, DPadUp)),
-            down: any!(keycode!(Down), pad_button!(0, DPadDown)),
-            left: any!(keycode!(Left), pad_button!(0, DPadLeft)),
-            right: any!(keycode!(Right), pad_button!(0, DPadRight)),
-            a: any!(keycode!(X), pad_button!(0, South)),
-            b: any!(keycode!(Z), pad_button!(0, West)),
-            start: any!(keycode!(Return), pad_button!(0, Start)),
-            select: any!(keycode!(RShift), pad_button!(0, Select)),
-        }
-    }
-}
-
-impl KeyConfig {
-    fn input(&self, input_state: &InputState) -> GameBoyInput {
-        GameBoyInput {
-            pad: Pad {
-                up: self.up.pressed(input_state),
-                down: self.down.pressed(input_state),
-                left: self.left.pressed(input_state),
-                right: self.right.pressed(input_state),
-                a: self.a.pressed(input_state),
-                b: self.b.pressed(input_state),
-                start: self.start.pressed(input_state),
-                select: self.select.pressed(input_state),
-            },
-        }
-    }
-}
-
-struct InputState<'a> {
-    input_keycode: &'a Input<KeyCode>,
-    input_gamepad_button: &'a Input<GamepadButton>,
-    input_gamepad_axis: &'a Axis<GamepadAxis>,
 }
 
 struct GameScreen(Handle<Image>);
@@ -336,20 +218,6 @@ fn setup_gameboy_system(
     });
 
     commands.insert_resource(AudioStreamQueue { queue: audio_queue });
-}
-
-fn gameboy_input_system(
-    key_config: Res<KeyConfig>,
-    input_keycode: Res<Input<KeyCode>>,
-    input_gamepad_button: Res<Input<GamepadButton>>,
-    input_gamepad_axis: Res<Axis<GamepadAxis>>,
-    mut input: ResMut<GameBoyInput>,
-) {
-    *input = key_config.input(&InputState {
-        input_keycode: &input_keycode,
-        input_gamepad_button: &input_gamepad_button,
-        input_gamepad_axis: &input_gamepad_axis,
-    });
 }
 
 fn gameboy_system(
@@ -412,8 +280,9 @@ struct MenuState {}
 
 fn ui_menu(
     mut commands: Commands,
+    config: Res<config::Config>,
+    mut persistent_state: ResMut<PersistentState>,
     mut egui_ctx: ResMut<EguiContext>,
-    // mut ui_state: ResMut<MenuState>,
     mut app_state: ResMut<State<AppState>>,
     mut windows: ResMut<Windows>,
     mut exit: EventWriter<AppExit>,
@@ -446,9 +315,10 @@ fn ui_menu(
                         .add_filter("GameBoy ROM file", &["gb", "gbc", "zip"])
                         .pick_file();
                     if let Some(file) = file {
-                        match GameBoyState::new(file, None) {
+                        match GameBoyState::new(&file, None, &config.palette) {
                             Ok(gb) => {
                                 commands.insert_resource(gb);
+                                persistent_state.add_recent(&file);
 
                                 if app_state.current() != &AppState::Running {
                                     app_state.set(AppState::Running).unwrap();
@@ -461,9 +331,15 @@ fn ui_menu(
                     }
                 }
                 ui.menu_button("Open Recent", |ui| {
-                    let recent_files = &["XXX", "YYY", "ZZZ"];
-                    for &recent_file in recent_files {
-                        if ui.button(recent_file).clicked() {
+                    ui.set_width_range(150.0..=300.0);
+                    for recent_file in &persistent_state.recent {
+                        let text = recent_file.file_name().unwrap().to_str().unwrap();
+                        let text = if text.chars().count() > 32 {
+                            format!("{}...", &text.chars().take(32).collect::<String>())
+                        } else {
+                            text.to_string()
+                        };
+                        if ui.button(text).clicked() {
                             todo!()
                         }
                     }

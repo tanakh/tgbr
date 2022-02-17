@@ -1,43 +1,166 @@
-// use anyhow::{anyhow, Result};
-// // use sdl2::{
-// //     controller::{self, GameController},
-// //     keyboard, EventPump, Sdl,
-// // };
+use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+use tgbr_core::{Input as GameBoyInput, Pad};
 
-// use tgbr_core::interface::{Input, Pad};
+#[derive(Clone, Serialize, Deserialize)]
+pub enum KeyAssign {
+    KeyCode(KeyCode),
+    GamepadButton(GamepadButton),
+    GamepadAxis(GamepadAxis, GamepadAxisDir),
+    All(Vec<KeyAssign>),
+    Any(Vec<KeyAssign>),
+}
 
-// #[derive(Clone)]
-// pub struct AssignScancode;
-// #[derive(Clone)]
-// pub struct AssignPadButton;
-// #[derive(Clone)]
-// pub struct AssignPadAxis;
+#[derive(Clone, Serialize, Deserialize)]
+pub enum GamepadAxisDir {
+    Pos,
+    Neg,
+}
 
-// #[derive(Clone)]
-// enum KeyAssign {
-//     Keyboard { scancode: AssignScancode },
-//     PadButton { id: usize, button: AssignPadButton },
-//     PadAxis { id: usize, axis: AssignPadAxis },
-//     All(Vec<KeyAssign>),
-//     Any(Vec<KeyAssign>),
-// }
+impl KeyAssign {
+    fn pressed(&self, input_state: &InputState<'_>) -> bool {
+        match self {
+            KeyAssign::KeyCode(keycode) => input_state.input_keycode.pressed(*keycode),
+            KeyAssign::GamepadButton(button) => input_state.input_gamepad_button.pressed(*button),
+            KeyAssign::GamepadAxis(axis, dir) => {
+                input_state
+                    .input_gamepad_axis
+                    .get(*axis)
+                    .map_or(false, |r| match dir {
+                        GamepadAxisDir::Pos => r >= 0.5,
+                        GamepadAxisDir::Neg => r <= -0.5,
+                    })
+            }
+            KeyAssign::All(ks) => ks.iter().all(|k| k.pressed(input_state)),
+            KeyAssign::Any(ks) => ks.iter().any(|k| k.pressed(input_state)),
+        }
+    }
+}
 
-// macro_rules! kbd {
-//     ($scancode:ident) => {
-//         KeyAssign::Keyboard {
-//             scancode: AssignScancode,
-//         }
-//     };
-// }
+#[derive(Serialize, Deserialize)]
+pub struct KeyConfig {
+    up: KeyAssign,
+    down: KeyAssign,
+    left: KeyAssign,
+    right: KeyAssign,
+    a: KeyAssign,
+    b: KeyAssign,
+    start: KeyAssign,
+    select: KeyAssign,
+}
 
-// macro_rules! pad_button {
-//     ($id:expr, $button:ident) => {
-//         KeyAssign::PadButton {
-//             id: $id,
-//             button: AssignPadButton,
-//         }
-//     };
-// }
+macro_rules! keycode {
+    ($code:ident) => {
+        KeyAssign::KeyCode(KeyCode::$code)
+    };
+}
+
+macro_rules! pad_button {
+    ($id:literal, $button:ident) => {
+        KeyAssign::GamepadButton(GamepadButton(Gamepad($id), GamepadButtonType::$button))
+    };
+}
+
+macro_rules! any {
+    ($($assign:expr),* $(,)?) => {
+        KeyAssign::Any(vec![$($assign),*])
+    };
+}
+
+macro_rules! all {
+    ($($assign:expr),* $(,)?) => {
+        KeyAssign::All(vec![$($assign),*])
+    };
+}
+
+impl Default for KeyConfig {
+    fn default() -> Self {
+        Self {
+            up: any!(keycode!(Up), pad_button!(0, DPadUp)),
+            down: any!(keycode!(Down), pad_button!(0, DPadDown)),
+            left: any!(keycode!(Left), pad_button!(0, DPadLeft)),
+            right: any!(keycode!(Right), pad_button!(0, DPadRight)),
+            a: any!(keycode!(X), pad_button!(0, South)),
+            b: any!(keycode!(Z), pad_button!(0, West)),
+            start: any!(keycode!(Return), pad_button!(0, Start)),
+            select: any!(keycode!(RShift), pad_button!(0, Select)),
+        }
+    }
+}
+
+impl KeyConfig {
+    fn input(&self, input_state: &InputState) -> GameBoyInput {
+        GameBoyInput {
+            pad: Pad {
+                up: self.up.pressed(input_state),
+                down: self.down.pressed(input_state),
+                left: self.left.pressed(input_state),
+                right: self.right.pressed(input_state),
+                a: self.a.pressed(input_state),
+                b: self.b.pressed(input_state),
+                start: self.start.pressed(input_state),
+                select: self.select.pressed(input_state),
+            },
+        }
+    }
+}
+
+struct InputState<'a> {
+    input_keycode: &'a Input<KeyCode>,
+    input_gamepad_button: &'a Input<GamepadButton>,
+    input_gamepad_axis: &'a Axis<GamepadAxis>,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub enum HotKey {
+    Reset,
+    Turbo,
+    StateSave,
+    StateLoad,
+    NextSlot,
+    PrevSlot,
+    Rewind,
+    FullScreen,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HotKeys(Vec<(HotKey, KeyAssign)>);
+
+impl Default for HotKeys {
+    fn default() -> Self {
+        use HotKey::*;
+        Self(vec![
+            (Reset, all![keycode!(LControl), keycode!(R)]),
+            (Turbo, any![keycode!(Tab), pad_button!(0, LeftTrigger)]),
+            (StateSave, all![keycode!(LControl), keycode!(S)]),
+            (StateLoad, all![keycode!(LControl), keycode!(L)]),
+            (NextSlot, all![keycode!(LControl), keycode!(N)]),
+            (PrevSlot, all![keycode!(LControl), keycode!(P)]),
+            (
+                Rewind,
+                any![
+                    keycode!(Back),
+                    all![pad_button!(0, LeftTrigger2), pad_button!(0, RightTrigger2)]
+                ],
+            ),
+            (FullScreen, all![keycode!(RAlt), keycode!(Return)]),
+        ])
+    }
+}
+
+pub fn gameboy_input_system(
+    key_config: Res<KeyConfig>,
+    input_keycode: Res<Input<KeyCode>>,
+    input_gamepad_button: Res<Input<GamepadButton>>,
+    input_gamepad_axis: Res<Axis<GamepadAxis>>,
+    mut input: ResMut<GameBoyInput>,
+) {
+    *input = key_config.input(&InputState {
+        input_keycode: &input_keycode,
+        input_gamepad_button: &input_gamepad_button,
+        input_gamepad_axis: &input_gamepad_axis,
+    });
+}
 
 // macro_rules! pad_axis {
 //     ($id:expr, $axis:ident) => {
@@ -45,18 +168,6 @@
 //             id: $id,
 //             axis: AssignPadAxis,
 //         }
-//     };
-// }
-
-// macro_rules! any {
-//     ($($key:expr),* $(,)?) => {
-//         KeyAssign::Any(vec![$($key),*])
-//     };
-// }
-
-// macro_rules! all {
-//     ($($key:expr),* $(,)?) => {
-//         KeyAssign::All(vec![$($key),*])
 //     };
 // }
 
@@ -90,42 +201,6 @@
 //     }
 // }
 
-// #[derive(PartialEq, Eq, Clone, Copy)]
-// pub enum HotKey {
-//     Reset,
-//     Turbo,
-//     StateSave,
-//     StateLoad,
-//     NextSlot,
-//     PrevSlot,
-//     Rewind,
-//     FullScreen,
-// }
-
-// pub struct HotKeys(Vec<(HotKey, KeyAssign)>);
-
-// impl Default for HotKeys {
-//     fn default() -> Self {
-//         use HotKey::*;
-//         Self(vec![
-//             (Reset, all![kbd!(LCtrl), kbd!(R)]),
-//             (Turbo, any![kbd!(Tab), pad_axis!(0, TriggerLeft)]),
-//             (StateSave, all![kbd!(LCtrl), kbd!(S)]),
-//             (StateLoad, all![kbd!(LCtrl), kbd!(L)]),
-//             (NextSlot, all![kbd!(LCtrl), kbd!(N)]),
-//             (PrevSlot, all![kbd!(LCtrl), kbd!(P)]),
-//             (
-//                 Rewind,
-//                 any![
-//                     kbd!(Backspace),
-//                     all![pad_axis!(0, TriggerLeft), pad_axis!(0, TriggerRight)]
-//                 ],
-//             ),
-//             (FullScreen, all![kbd!(RAlt), kbd!(Return)]),
-//         ])
-//     }
-// }
-
 // #[derive(PartialEq, Eq, Clone)]
 // enum Key {
 //     PadButton(PadButton),
@@ -152,11 +227,6 @@
 //         self.prev_pressed = self.pressed;
 //         self.pressed = pressed;
 //     }
-// }
-
-// pub struct InputManager {
-//     // controllers: Vec<GameController>,
-// // key_states: Vec<KeyState>,
 // }
 
 // static NULL_KEY: KeyState = KeyState {
@@ -210,22 +280,6 @@
 //     //     }
 //     // }
 
-//     pub fn input(&self) -> Input {
-//         use PadButton::*;
-//         Input {
-//             pad: Pad {
-//                 up: self.pad_button(Up).pressed(),
-//                 down: self.pad_button(Down).pressed(),
-//                 left: self.pad_button(Left).pressed(),
-//                 right: self.pad_button(Right).pressed(),
-//                 a: self.pad_button(A).pressed(),
-//                 b: self.pad_button(B).pressed(),
-//                 start: self.pad_button(Start).pressed(),
-//                 select: self.pad_button(Select).pressed(),
-//             },
-//         }
-//     }
-
 //     pub fn pad_button(&self, pad_button: PadButton) -> &KeyState {
 //         // self.key_states
 //         //     .iter()
@@ -242,20 +296,3 @@
 //         todo!()
 //     }
 // }
-
-// // fn check_pressed(
-// //     kbstate: &keyboard::KeyboardState<'_>,
-// //     controllers: &[GameController],
-// //     key: &KeyAssign,
-// // ) -> bool {
-// //     use KeyAssign::*;
-// //     match key {
-// //         Keyboard { scancode } => kbstate.is_scancode_pressed(*scancode),
-// //         PadButton { id, button } => controllers.get(*id).map_or(false, |r| r.button(*button)),
-// //         PadAxis { id, axis } => controllers
-// //             .get(*id)
-// //             .map_or(false, |r| dbg!(r.axis(*axis)) > 32767 / 2),
-// //         All(keys) => keys.iter().all(|k| check_pressed(kbstate, controllers, k)),
-// //         Any(keys) => keys.iter().any(|k| check_pressed(kbstate, controllers, k)),
-// //     }
-// // }
