@@ -306,6 +306,8 @@ fn ui_menu(
         window.set_resolution(w as f32, h as f32);
     };
 
+    let mut load_rom_file = None;
+
     egui::TopBottomPanel::top("top_panel").show(egui_ctx.ctx_mut(), |ui| {
         egui::menu::bar(ui, |ui| {
             egui::menu::menu_button(ui, "File", |ui| {
@@ -315,19 +317,7 @@ fn ui_menu(
                         .add_filter("GameBoy ROM file", &["gb", "gbc", "zip"])
                         .pick_file();
                     if let Some(file) = file {
-                        match GameBoyState::new(&file, None, &config.palette) {
-                            Ok(gb) => {
-                                commands.insert_resource(gb);
-                                persistent_state.add_recent(&file);
-
-                                if app_state.current() != &AppState::Running {
-                                    app_state.set(AppState::Running).unwrap();
-                                }
-                            }
-                            Err(err) => {
-                                error!("{err}");
-                            }
-                        }
+                        load_rom_file = Some(file);
                     }
                 }
                 ui.menu_button("Open Recent", |ui| {
@@ -340,7 +330,8 @@ fn ui_menu(
                             text.to_string()
                         };
                         if ui.button(text).clicked() {
-                            todo!()
+                            ui.close_menu();
+                            load_rom_file = Some(recent_file.to_owned());
                         }
                     }
                 });
@@ -365,6 +356,22 @@ fn ui_menu(
             });
         });
     });
+
+    if let Some(file) = load_rom_file {
+        match GameBoyState::new(&file, None, &config.palette) {
+            Ok(gb) => {
+                commands.insert_resource(gb);
+                persistent_state.add_recent(&file);
+
+                if app_state.current() != &AppState::Running {
+                    app_state.set(AppState::Running).unwrap();
+                }
+            }
+            Err(err) => {
+                error!("{err}");
+            }
+        }
+    };
 
     // egui::CentralPanel::default().show(egui_ctx.ctx_mut(), |ui| {
     //     if ui
