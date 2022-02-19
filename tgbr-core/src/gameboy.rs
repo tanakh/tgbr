@@ -101,10 +101,14 @@ impl GameBoy {
         let mut rom = crate::rom::Rom::default();
         std::mem::swap(&mut rom, self.ctx.rom_mut());
 
-        let boot_rom = self.ctx.inner.bus.boot_rom();
+        let boot_rom = self.ctx.inner.bus.boot_rom().clone();
         let dmg_palette = self.ctx.ppu().dmg_palette();
 
-        self.ctx = Context::new(rom, boot_rom, backup_ram, dmg_palette);
+        self.ctx = Context::new(rom, &boot_rom, backup_ram, dmg_palette);
+
+        if !boot_rom.is_some() {
+            self.setup_initial_state();
+        }
     }
 
     pub fn exec_frame(&mut self) {
