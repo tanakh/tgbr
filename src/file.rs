@@ -8,9 +8,6 @@ use std::{
 
 use tgbr_core::Rom;
 
-const SAVE_DIR: &str = "./save";
-const STATE_DIR: &str = "./state";
-
 fn atomic_write_file(file: &Path, data: &[u8]) -> Result<()> {
     use std::io::Write;
     let mut f = tempfile::NamedTempFile::new()?;
@@ -19,21 +16,20 @@ fn atomic_write_file(file: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn get_save_file_path(rom_file: &Path) -> Result<PathBuf> {
+fn get_save_file_path(rom_file: &Path, save_dir: &Path) -> Result<PathBuf> {
     let sav_file = rom_file
         .file_stem()
         .ok_or_else(|| anyhow!("Invalid file name: {}", rom_file.display()))?;
 
-    Ok(Path::new(SAVE_DIR).join(sav_file).with_extension("sav"))
+    Ok(save_dir.join(sav_file).with_extension("sav"))
 }
 
-fn get_state_file_path(rom_file: &Path, slot: usize) -> Result<PathBuf> {
+fn get_state_file_path(rom_file: &Path, slot: usize, state_dir: &Path) -> Result<PathBuf> {
     let state_file = rom_file
         .file_stem()
         .ok_or_else(|| anyhow!("Invalid file name: {}", rom_file.display()))?;
     let state_file = format!("{}-{slot}", state_file.to_string_lossy());
 
-    let state_dir = Path::new(STATE_DIR);
     if !state_dir.exists() {
         fs::create_dir_all(state_dir)?;
     } else if !state_dir.is_dir() {
@@ -95,8 +91,8 @@ pub fn load_rom(file: &Path) -> Result<Rom> {
     }
 }
 
-pub fn load_backup_ram(file: &Path) -> Result<Option<Vec<u8>>> {
-    let save_file_path = get_save_file_path(file)?;
+pub fn load_backup_ram(file: &Path, save_dir: &Path) -> Result<Option<Vec<u8>>> {
+    let save_file_path = get_save_file_path(file, save_dir)?;
 
     Ok(if save_file_path.is_file() {
         info!("Loading backup RAM: `{}`", save_file_path.display());
@@ -106,8 +102,8 @@ pub fn load_backup_ram(file: &Path) -> Result<Option<Vec<u8>>> {
     })
 }
 
-pub fn save_backup_ram(rom_file: &Path, ram: &[u8]) -> Result<()> {
-    let save_file_path = get_save_file_path(rom_file)?;
+pub fn save_backup_ram(rom_file: &Path, ram: &[u8], save_dir: &Path) -> Result<()> {
+    let save_file_path = get_save_file_path(rom_file, save_dir)?;
 
     if !save_file_path.exists() {
         info!("Creating backup RAM file: `{}`", save_file_path.display());
@@ -120,15 +116,13 @@ pub fn save_backup_ram(rom_file: &Path, ram: &[u8]) -> Result<()> {
     atomic_write_file(&save_file_path, ram)
 }
 
-pub fn save_state_data(rom_file: &Path, slot: usize, data: &[u8]) -> Result<()> {
-    atomic_write_file(&get_state_file_path(rom_file, slot)?, data)?;
-    info!("Saved state to slot {slot}");
+pub fn save_state_data(rom_file: &Path, slot: usize, data: &[u8], state_dir: &Path) -> Result<()> {
+    atomic_write_file(&get_state_file_path(rom_file, slot, state_dir)?, data)?;
     Ok(())
 }
 
-pub fn load_state_data(rom_file: &Path, slot: usize) -> Result<Vec<u8>> {
-    let ret = fs::read(get_state_file_path(rom_file, slot)?)?;
-    info!("Loaded state from slot {slot}");
+pub fn load_state_data(rom_file: &Path, slot: usize, state_dir: &Path) -> Result<Vec<u8>> {
+    let ret = fs::read(get_state_file_path(rom_file, slot, state_dir)?)?;
     Ok(ret)
 }
 

@@ -1,19 +1,14 @@
 mod config;
 mod file;
 mod input;
+mod menu;
+mod rewinding;
 
 use anyhow::Result;
-use bevy_kira_audio::{AudioPlugin, AudioStream, AudioStreamPlugin, Frame, StreamedAudio};
+use bevy_tiled_camera::TiledCameraPlugin;
 use log::{error, info, log_enabled};
-// use sdl2::{
-//     audio::{AudioQueue, AudioSpecDesired},
-//     event::Event,
-//     pixels::{Color, PixelFormatEnum},
-//     rect::Rect,
-//     render::Texture,
-//     surface::Surface,
-//     EventPump,
-// };
+use menu::MenuPlugin;
+use rewinding::{enter_rewinding_system, rewinding_system, AutoSavedState};
 use std::{
     collections::VecDeque,
     fs,
@@ -21,30 +16,20 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use tgbr_core::{AudioBuffer, Config, GameBoy, Input as GameBoyInput};
-
-use config::{load_config, load_persistent_state, Palette, PersistentState};
-use file::{load_backup_ram, load_rom, print_rom_info, save_backup_ram};
-use input::{gameboy_input_system, KeyConfig};
-
-// const SCALING: usize = 4;
-// const FPS: f64 = 60.0;
-const FRAME_SKIP_ON_TURBO: usize = 5;
-const AUDIO_FREQUENCY: usize = 48000;
-const AUDIO_BUFFER_SAMPLES: usize = 2048;
-
-const MAX_AUTO_STATE_SAVES: usize = 10 * 60;
-const AUTO_STATE_SAVE_FREQUENCY: usize = 2 * 60;
-
 use bevy::{
-    app::AppExit,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-    window::WindowMode,
 };
-use bevy_egui::{egui, EguiContext, EguiPlugin};
+use bevy_egui::EguiPlugin;
+use bevy_kira_audio::{AudioPlugin, AudioStream, AudioStreamPlugin, Frame, StreamedAudio};
 
-const TIMESTEP_PER_SECOND: f64 = 1.0 / 60.0;
+use tgbr_core::{AudioBuffer, Config, FrameBuffer, GameBoy, Input as GameBoyInput};
+
+use config::{load_config, load_persistent_state, Palette};
+use file::{load_backup_ram, load_rom, print_rom_info, save_backup_ram};
+use input::{check_hotkey, gameboy_input_system, HotKey};
+
+use crate::file::{load_state_data, save_state_data};
 
 #[argopt::cmd]
 fn main(
@@ -54,32 +39,32 @@ fn main(
     /// Path to Cartridge ROM
     rom_file: Option<PathBuf>,
 ) -> Result<()> {
+    let config = load_config()?;
+
     let mut app = App::new();
     app.insert_resource(WindowDescriptor {
         title: "TGB-R".to_string(),
-        width: 160.0 * 4.0,
-        height: 24.0 + 144.0 * 4.0,
+        resizable: false,
         ..Default::default()
     })
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
-    .init_resource::<MenuState>()
+    .init_resource::<UiState>()
     .insert_resource(Msaa { samples: 4 })
     .add_plugins(DefaultPlugins)
+    .add_plugin(TiledCameraPlugin)
     .add_plugin(AudioPlugin)
     .add_plugin(EguiPlugin)
-    .add_startup_system(setup)
-    .add_system(ui_menu);
-
-    add_gameboy(&mut app);
-
-    let config = load_config()?;
+    .add_plugin(MenuPlugin)
+    .add_plugin(GameBoyPlugin)
+    .add_event::<HotKey>()
+    .add_startup_system(setup);
 
     if let Some(rom_file) = rom_file {
-        let gb = GameBoyState::new(rom_file, boot_rom, &config.palette)?;
+        let gb = GameBoyState::new(rom_file, boot_rom, config.save_dir(), config.palette())?;
         app.insert_resource(gb);
         app.add_state(AppState::Running);
     } else {
-        app.add_state(AppState::Unloaded);
+        app.add_state(AppState::Menu);
     }
 
     app.insert_resource(config);
@@ -90,26 +75,30 @@ fn main(
 }
 
 fn setup(mut commands: Commands) {
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    use bevy_tiled_camera::*;
+    commands.spawn_bundle(TiledCameraBundle::new().with_target_resolution(1, [160, 144]));
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-enum AppState {
-    Unloaded,
+pub enum AppState {
+    Menu,
     Running,
     Rewinding,
 }
 
-#[derive(Component)]
-struct GameBoyState {
+pub struct GameBoyState {
     gb: GameBoy,
     rom_file: PathBuf,
+    save_dir: PathBuf,
+    frames: usize,
+    pub auto_saved_states: VecDeque<AutoSavedState>,
 }
 
 impl GameBoyState {
     fn new(
         rom_file: impl AsRef<Path>,
-        boot_rom: Option<PathBuf>,
+        boot_rom: Option<impl AsRef<Path>>,
+        save_dir: impl AsRef<Path>,
         palette: &Palette,
     ) -> Result<Self> {
         let rom = load_rom(rom_file.as_ref())?;
@@ -117,7 +106,7 @@ impl GameBoyState {
             print_rom_info(&rom.info());
         }
 
-        let backup_ram = load_backup_ram(rom_file.as_ref())?;
+        let backup_ram = load_backup_ram(rom_file.as_ref(), save_dir.as_ref())?;
 
         let boot_rom = if let Some(boot_rom) = boot_rom {
             Some(fs::read(boot_rom)?)
@@ -134,6 +123,9 @@ impl GameBoyState {
         Ok(Self {
             gb,
             rom_file: rom_file.as_ref().to_owned(),
+            save_dir: save_dir.as_ref().to_owned(),
+            frames: 0,
+            auto_saved_states: VecDeque::new(),
         })
     }
 }
@@ -141,7 +133,7 @@ impl GameBoyState {
 impl Drop for GameBoyState {
     fn drop(&mut self) {
         if let Some(ram) = self.gb.backup_ram() {
-            if let Err(err) = save_backup_ram(&self.rom_file, &ram) {
+            if let Err(err) = save_backup_ram(&self.rom_file, &ram, &self.save_dir) {
                 error!("Failed to save backup ram: {err}");
             }
         } else {
@@ -150,21 +142,40 @@ impl Drop for GameBoyState {
     }
 }
 
-fn add_gameboy(app: &mut App) {
-    app.add_plugin(AudioStreamPlugin::<AudioStreamQueue>::default());
+struct GameBoyPlugin;
 
-    app.add_system(gameboy_input_system.label("input"));
-    app.add_system_set(SystemSet::on_enter(AppState::Running).with_system(setup_gameboy_system));
-    app.add_system_set(
-        SystemSet::on_update(AppState::Running)
-            .with_system(gameboy_system)
-            .after("input"),
-    );
-    app.init_resource::<KeyConfig>();
-    app.init_resource::<GameBoyInput>();
+impl Plugin for GameBoyPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugin(AudioStreamPlugin::<AudioStreamQueue>::default())
+            .init_resource::<GameBoyInput>()
+            .add_system_set(
+                SystemSet::on_update(AppState::Running)
+                    .with_system(check_hotkey)
+                    .with_system(process_hotkey)
+                    .with_system(gameboy_input_system.label("input")),
+            )
+            .add_system_set(
+                SystemSet::on_enter(AppState::Running).with_system(setup_gameboy_system),
+            )
+            .add_system_set(
+                SystemSet::on_resume(AppState::Running).with_system(resume_gameboy_system),
+            )
+            .add_system_set(
+                SystemSet::on_update(AppState::Running)
+                    .with_system(gameboy_system)
+                    .after("input"),
+            )
+            .add_system_set(SystemSet::on_exit(AppState::Running).with_system(exit_gameboy_system))
+            .add_system_set(
+                SystemSet::on_enter(AppState::Rewinding).with_system(enter_rewinding_system),
+            )
+            .add_system_set(
+                SystemSet::on_update(AppState::Rewinding).with_system(rewinding_system),
+            );
+    }
 }
 
-struct GameScreen(Handle<Image>);
+pub struct GameScreen(Handle<Image>);
 
 #[derive(Debug, Default)]
 struct AudioStreamQueue {
@@ -181,15 +192,24 @@ impl AudioStream for AudioStreamQueue {
     }
 }
 
+#[derive(Default)]
+struct UiState {
+    state_save_slot: usize,
+}
+
+#[derive(Component)]
+pub struct ScreenSprite;
+
 fn setup_gameboy_system(
     mut commands: Commands,
+    windows: ResMut<Windows>,
+    config: Res<config::Config>,
+    gb_state: Res<GameBoyState>,
     mut images: ResMut<Assets<Image>>,
     audio: Res<StreamedAudio<AudioStreamQueue>>,
 ) {
-    info!("Setting up gameboy system");
-
-    let width = 160;
-    let height = 144;
+    let width = gb_state.gb.frame_buffer().width as u32;
+    let height = gb_state.gb.frame_buffer().height as u32;
     let img = Image::new(
         Extent3d {
             width,
@@ -197,17 +217,17 @@ fn setup_gameboy_system(
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        vec![0x80; (width * height * 4) as usize],
+        vec![0; (width * height * 4) as usize],
         TextureFormat::Rgba8UnormSrgb,
     );
 
     let texture = images.add(img);
-    commands.spawn_bundle(SpriteBundle {
-        texture: texture.clone(),
-        transform: Transform::from_scale(Vec3::new(4.0, 4.0, 1.0))
-            .with_translation(Vec3::new(0.0, -12.0, 0.0)),
-        ..Default::default()
-    });
+    commands
+        .spawn_bundle(SpriteBundle {
+            texture: texture.clone(),
+            ..Default::default()
+        })
+        .insert(ScreenSprite);
 
     commands.insert_resource(GameScreen(texture));
 
@@ -218,11 +238,108 @@ fn setup_gameboy_system(
     });
 
     commands.insert_resource(AudioStreamQueue { queue: audio_queue });
+
+    resume_gameboy_system(windows, config, gb_state);
+}
+
+fn resume_gameboy_system(
+    mut windows: ResMut<Windows>,
+    config: Res<config::Config>,
+    gb_state: Res<GameBoyState>,
+) {
+    let window = windows.get_primary_mut().unwrap();
+    let scale = config.scaling() as f32;
+    let width = gb_state.gb.frame_buffer().width as u32;
+    let height = gb_state.gb.frame_buffer().height as u32;
+    window.set_resolution(width as f32 * scale, height as f32 * scale);
+}
+
+fn exit_gameboy_system(mut commands: Commands, screen_entity: Query<Entity, With<ScreenSprite>>) {
+    let screen_entity = screen_entity.single();
+    commands.entity(screen_entity).despawn();
+}
+
+fn process_hotkey(
+    config: Res<config::Config>,
+    mut reader: EventReader<HotKey>,
+    mut app_state: ResMut<State<AppState>>,
+    mut gb_state: Option<ResMut<GameBoyState>>,
+    mut ui_state: ResMut<UiState>,
+) {
+    for hotkey in reader.iter() {
+        match hotkey {
+            HotKey::Reset => {
+                if let Some(state) = &mut gb_state {
+                    state.gb.reset();
+                    info!("Reset machine");
+                }
+            }
+            HotKey::StateSave => {
+                if let Some(state) = &mut gb_state {
+                    let data = state.gb.save_state();
+                    save_state_data(
+                        &state.rom_file,
+                        ui_state.state_save_slot,
+                        &data,
+                        config.state_dir(),
+                    )
+                    .unwrap();
+                    info!("State saved to slot {}", ui_state.state_save_slot);
+                }
+            }
+            HotKey::StateLoad => {
+                if let Some(state) = &mut gb_state {
+                    let res = (|| {
+                        let data = load_state_data(
+                            &state.rom_file,
+                            ui_state.state_save_slot,
+                            config.state_dir(),
+                        )?;
+                        state.gb.load_state(&data)
+                    })();
+                    if let Err(e) = res {
+                        error!("Failed to load state: {}", e);
+                    }
+                }
+            }
+            HotKey::NextSlot => {
+                ui_state.state_save_slot += 1;
+                info!("State save slot changed: {}", ui_state.state_save_slot);
+            }
+            HotKey::PrevSlot => {
+                ui_state.state_save_slot = ui_state.state_save_slot.saturating_sub(1);
+                info!("State save slot changed: {}", ui_state.state_save_slot);
+            }
+            HotKey::Rewind => {
+                if app_state.current() == &AppState::Running {
+                    let gb_state = gb_state.as_mut().unwrap();
+
+                    let saved_state = AutoSavedState {
+                        data: gb_state.gb.save_state(),
+                        thumbnail: frame_buffer_to_image(gb_state.gb.frame_buffer()),
+                    };
+
+                    gb_state.auto_saved_states.push_back(saved_state);
+                    if gb_state.auto_saved_states.len() > config.auto_state_save_limit() {
+                        gb_state.auto_saved_states.pop_front();
+                    }
+
+                    app_state.push(AppState::Rewinding).unwrap();
+                }
+            }
+            HotKey::Menu => {
+                app_state.set(AppState::Menu).unwrap();
+            }
+            HotKey::FullScreen => {}
+
+            HotKey::Turbo => {}
+        }
+    }
 }
 
 fn gameboy_system(
-    // mut commands: Commands,
-    screen: ResMut<GameScreen>,
+    screen: Res<GameScreen>,
+    config: Res<config::Config>,
     mut state: ResMut<GameBoyState>,
     mut images: ResMut<Assets<Image>>,
     input: Res<GameBoyInput>,
@@ -248,150 +365,70 @@ fn gameboy_system(
         return;
     }
 
+    let mut exec_frame = |queue: &mut VecDeque<Frame>| {
+        state.gb.exec_frame();
+        state.frames += 1;
+        if state.frames % config.auto_state_save_freq() == 0 {
+            let saved_state = AutoSavedState {
+                data: state.gb.save_state(),
+                thumbnail: frame_buffer_to_image(state.gb.frame_buffer()),
+            };
+
+            state.auto_saved_states.push_back(saved_state);
+            if state.auto_saved_states.len() > config.auto_state_save_limit() {
+                state.auto_saved_states.pop_front();
+            }
+
+            info!("Auto state saved");
+        }
+        push_audio_queue(&mut *queue, state.gb.audio_buffer());
+    };
+
     if queue.len() < samples_per_frame * 2 {
         // execution too slow. run 2 frame for supply enough audio samples.
-        state.gb.exec_frame();
-        push_audio_queue(&mut *queue, state.gb.audio_buffer());
+        exec_frame(&mut *queue);
     }
+    exec_frame(&mut *queue);
 
-    state.gb.exec_frame();
-    push_audio_queue(&mut *queue, state.gb.audio_buffer());
-
+    // Update texture
     let fb = state.gb.frame_buffer();
     let image = images.get_mut(&screen.0).unwrap();
+    copy_frame_buffer(&mut image.data, fb);
+}
 
-    let width = fb.width;
-    let height = fb.height;
+fn frame_buffer_to_image(frame_buffer: &FrameBuffer) -> Image {
+    let width = frame_buffer.width as u32;
+    let height = frame_buffer.height as u32;
+
+    let mut data = vec![0; width as usize * height as usize * 4];
+    copy_frame_buffer(&mut data, frame_buffer);
+    Image::new(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+    )
+}
+
+fn copy_frame_buffer(data: &mut [u8], frame_buffer: &FrameBuffer) {
+    let width = frame_buffer.width;
+    let height = frame_buffer.height;
 
     for y in 0..height {
         for x in 0..width {
             let ix = y * width + x;
-            let pixel = &mut image.data[ix * 4..ix * 4 + 4];
-            pixel[0] = fb.buf[ix].r;
-            pixel[1] = fb.buf[ix].g;
-            pixel[2] = fb.buf[ix].b;
+            let pixel = &mut data[ix * 4..ix * 4 + 4];
+            pixel[0] = frame_buffer.buf[ix].r;
+            pixel[1] = frame_buffer.buf[ix].g;
+            pixel[2] = frame_buffer.buf[ix].b;
             pixel[3] = 0xff;
         }
     }
 }
-
-#[derive(Default)]
-struct MenuState {}
-
-fn ui_menu(
-    mut commands: Commands,
-    config: Res<config::Config>,
-    mut persistent_state: ResMut<PersistentState>,
-    mut egui_ctx: ResMut<EguiContext>,
-    mut app_state: ResMut<State<AppState>>,
-    mut windows: ResMut<Windows>,
-    mut exit: EventWriter<AppExit>,
-) {
-    let flip_fullscreen = |windows: &mut ResMut<Windows>| {
-        let window = windows.get_primary_mut().unwrap();
-        let cur_mode = window.mode();
-        match cur_mode {
-            WindowMode::Windowed => window.set_mode(WindowMode::BorderlessFullscreen),
-            WindowMode::BorderlessFullscreen => window.set_mode(WindowMode::Windowed),
-            _ => unreachable!(),
-        }
-    };
-
-    let set_window_scale = |windows: &mut ResMut<Windows>, scale: usize| {
-        let window = windows.get_primary_mut().unwrap();
-
-        let w = 160 * scale;
-        let h = 144 * scale;
-
-        window.set_resolution(w as f32, h as f32);
-    };
-
-    let mut load_rom_file = None;
-
-    egui::TopBottomPanel::top("top_panel").show(egui_ctx.ctx_mut(), |ui| {
-        egui::menu::bar(ui, |ui| {
-            egui::menu::menu_button(ui, "File", |ui| {
-                if ui.button("Open").clicked() {
-                    ui.close_menu();
-                    let file = rfd::FileDialog::new()
-                        .add_filter("GameBoy ROM file", &["gb", "gbc", "zip"])
-                        .pick_file();
-                    if let Some(file) = file {
-                        load_rom_file = Some(file);
-                    }
-                }
-                ui.menu_button("Open Recent", |ui| {
-                    ui.set_width_range(150.0..=300.0);
-                    for recent_file in &persistent_state.recent {
-                        let text = recent_file.file_name().unwrap().to_str().unwrap();
-                        let text = if text.chars().count() > 32 {
-                            format!("{}...", &text.chars().take(32).collect::<String>())
-                        } else {
-                            text.to_string()
-                        };
-                        if ui.button(text).clicked() {
-                            ui.close_menu();
-                            load_rom_file = Some(recent_file.to_owned());
-                        }
-                    }
-                });
-                ui.separator();
-                if ui.button("Quit").clicked() {
-                    exit.send(AppExit);
-                }
-            });
-            egui::menu::menu_button(ui, "Option", |ui| {
-                if ui.button("Fullscreen").clicked() {
-                    flip_fullscreen(&mut windows);
-                    ui.close_menu();
-                }
-                ui.menu_button("Scale", |ui| {
-                    for i in 1..=4 {
-                        if ui.button(format!("{}x", i)).clicked() {
-                            set_window_scale(&mut windows, i);
-                            ui.close_menu();
-                        }
-                    }
-                });
-            });
-        });
-    });
-
-    if let Some(file) = load_rom_file {
-        match GameBoyState::new(&file, None, &config.palette) {
-            Ok(gb) => {
-                commands.insert_resource(gb);
-                persistent_state.add_recent(&file);
-
-                if app_state.current() != &AppState::Running {
-                    app_state.set(AppState::Running).unwrap();
-                }
-            }
-            Err(err) => {
-                error!("{err}");
-            }
-        }
-    };
-
-    // egui::CentralPanel::default().show(egui_ctx.ctx_mut(), |ui| {
-    //     if ui
-    //         .interact(
-    //             egui::Rect::EVERYTHING,
-    //             egui::Id::null(),
-    //             egui::Sense::click(),
-    //         )
-    //         .double_clicked()
-    //     {
-    //         flip_fullscreen(&mut windows);
-    //     }
-    // });
-}
-
-// enum AppState {
-//     Running,
-//     Paused,
-//     Rewinding,
-// }
 
 // struct App {
 //     gb: GameBoy,
@@ -414,11 +451,6 @@ fn ui_menu(
 //     // audio_queue: AudioQueue<i16>,
 //     // event_pump: EventPump,
 //     input_manager: InputManager,
-// }
-
-// struct AutoSavedState {
-//     thumbnail: Texture,
-//     data: Vec<u8>,
 // }
 
 // impl App {
@@ -538,73 +570,6 @@ fn ui_menu(
 //         Ok(())
 //     }
 
-//     fn dispatch_event(&mut self) -> Result<()> {
-//         match self.state {
-//             AppState::Running => {
-//                 if self.input_manager.hotkey(HotKey::Reset).pushed() {
-//                     self.gb.reset();
-//                     info!("Reset machine");
-//                 }
-
-//                 if self.input_manager.hotkey(HotKey::StateSave).pushed() {
-//                     let data = self.gb.save_state();
-//                     save_state_data(&self.rom_file, self.state_save_slot, &data)?;
-//                 }
-
-//                 if self.input_manager.hotkey(HotKey::StateLoad).pushed() {
-//                     let data = load_state_data(&self.rom_file, self.state_save_slot)?;
-//                     let res = self.gb.load_state(&data);
-//                     if let Err(e) = res {
-//                         error!("Failed to load state: {}", e);
-//                     }
-//                 }
-
-//                 if self.input_manager.hotkey(HotKey::NextSlot).pushed() {
-//                     self.state_save_slot += 1;
-//                     info!("State save slot changed: {}", self.state_save_slot);
-//                 }
-
-//                 if self.input_manager.hotkey(HotKey::PrevSlot).pushed() {
-//                     self.state_save_slot = self.state_save_slot.saturating_sub(1);
-//                     info!("State save slot changed: {}", self.state_save_slot);
-//                 }
-
-//                 if self.input_manager.hotkey(HotKey::Rewind).pushed() {
-//                     self.auto_state_save()?;
-//                     self.state = AppState::Rewinding;
-//                     self.rewind_pos = self.auto_saved_states.len() - 1;
-//                 }
-//             }
-//             AppState::Rewinding => {
-//                 if self.input_manager.pad_button(PadButton::Left).pushed() {
-//                     self.rewind_pos = self.rewind_pos.saturating_sub(1);
-//                 }
-//                 if self.input_manager.pad_button(PadButton::Right).pushed() {
-//                     self.rewind_pos = min(self.auto_saved_states.len() - 1, self.rewind_pos + 1);
-//                 }
-//                 if self.input_manager.pad_button(PadButton::A).pushed()
-//                     || self.input_manager.pad_button(PadButton::Start).pushed()
-//                 {
-//                     self.gb
-//                         .load_state(&self.auto_saved_states[self.rewind_pos].data)?;
-//                     while self.auto_saved_states.len() > self.rewind_pos {
-//                         let st = self.auto_saved_states.pop_back().unwrap();
-//                         unsafe { st.thumbnail.destroy() };
-//                     }
-//                     self.state = AppState::Running;
-//                     self.frames = 0;
-//                     info!("State rewinded");
-//                 }
-//                 if self.input_manager.pad_button(PadButton::B).pushed() {
-//                     self.state = AppState::Running;
-//                 }
-//             }
-//             AppState::Paused => todo!(),
-//         }
-
-//         Ok(())
-//     }
-
 //     fn running(&mut self, font: &sdl2::ttf::Font<'_, '_>) -> Result<()> {
 //         let input = self.input_manager.input();
 //         self.gb.set_input(&input);
@@ -686,51 +651,6 @@ fn ui_menu(
 //         Ok(())
 //     }
 
-//     fn convert_coord(&self, pt: (f64, f64), w: f64, h: f64) -> Option<Rect> {
-//         let cx = pt.0;
-//         let cy = pt.1;
-//         let l = cx - 0.5 * w;
-//         let u = cy - 0.5 * h;
-//         Some(
-//             (
-//                 (l * self.screen_width as f64).round() as i32,
-//                 (u * self.screen_height as f64).round() as i32,
-//                 (w * self.screen_width as f64).round() as u32,
-//                 (h * self.screen_height as f64).round() as u32,
-//             )
-//                 .into(),
-//         )
-//     }
-
-//     fn auto_state_save(&mut self) -> Result<()> {
-//         let state = AutoSavedState {
-//             data: self.gb.save_state(),
-//             thumbnail: self.to_texture(self.gb.frame_buffer())?,
-//         };
-//         self.auto_saved_states.push_back(state);
-//         if self.auto_saved_states.len() > MAX_AUTO_STATE_SAVES {
-//             let st = self.auto_saved_states.pop_front().unwrap();
-//             unsafe { st.thumbnail.destroy() };
-//         }
-
-//         Ok(())
-//     }
-
-//     fn to_texture(&self, frame_buffer: &FrameBuffer) -> Result<Texture> {
-//         let mut surface: Surface<'static> = sdl2::surface::Surface::new(
-//             frame_buffer.width as u32,
-//             frame_buffer.height as u32,
-//             PixelFormatEnum::RGB24,
-//         )
-//         .map_err(|e| anyhow!("{e}"))?;
-
-//         self.copy_to_surface(&mut surface, frame_buffer);
-//         let ret = surface
-//             .as_texture(&self.texture_creator)
-//             .map_err(|e| anyhow!("{e}"))?;
-//         Ok(ret)
-//     }
-
 //     fn copy_to_surface(&self, surface: &mut Surface, frame_buffer: &FrameBuffer) {
 //         surface.with_lock_mut(|r| {
 //             for y in 0..frame_buffer.height {
@@ -743,36 +663,6 @@ fn ui_menu(
 //                 }
 //             }
 //         });
-//     }
-
-//     fn sync_audio(&mut self) {
-//         while self.audio_queue.size() as usize >= AUDIO_BUFFER_SAMPLES * 2 * 2 {
-//             std::thread::sleep(Duration::from_millis(1));
-//         }
-//     }
-
-//     fn queue_audio(&mut self) -> Result<()> {
-//         if (self.audio_queue.size() as usize) >= AUDIO_BUFFER_SAMPLES * 2 * 2 {
-//             return Ok(());
-//         }
-
-//         let audio_buf = self.gb.audio_buffer();
-//         assert!(
-//             (799..=801).contains(&audio_buf.buf.len()),
-//             "invalid generated audio length: {}",
-//             audio_buf.buf.len()
-//         );
-//         self.audio_queue
-//             .queue_audio(
-//                 &audio_buf
-//                     .buf
-//                     .iter()
-//                     .map(|s| [s.right, s.left])
-//                     .flatten()
-//                     .collect::<Vec<_>>(),
-//             )
-//             .map_err(|e| anyhow!("{e}"))?;
-//         Ok(())
 //     }
 
 //     fn render_fps(&mut self, font: &sdl2::ttf::Font<'_, '_>) -> Result<()> {
@@ -807,18 +697,4 @@ fn ui_menu(
 
 //         Ok(())
 //     }
-// }
-
-// fn process_events(event_pump: &mut EventPump) -> bool {
-//     for event in event_pump.poll_iter() {
-//         match event {
-//             Event::Quit { .. }
-//             | Event::KeyDown {
-//                 keycode: Some(sdl2::keyboard::Keycode::Escape),
-//                 ..
-//             } => return false,
-//             _ => {}
-//         }
-//     }
-//     true
 // }
