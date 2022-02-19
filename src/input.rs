@@ -21,7 +21,7 @@ pub enum GamepadAxisDir {
 }
 
 impl KeyAssign {
-    fn pressed(&self, input_state: &InputState<'_>) -> bool {
+    pub fn pressed(&self, input_state: &InputState<'_>) -> bool {
         match self {
             KeyAssign::KeyCode(keycode) => input_state.input_keycode.pressed(*keycode),
             KeyAssign::GamepadButton(button) => input_state.input_gamepad_button.pressed(*button),

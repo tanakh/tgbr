@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::{
     config::{Config, PersistentState},
-    AppState, GameBoyState, ScreenSprite,
+    AppState, GameBoyState,
 };
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{egui, EguiContext};
@@ -58,7 +58,7 @@ fn menu_event_system(
                 info!("Opening file: {:?}", path);
                 match GameBoyState::new(
                     &path,
-                    None as Option<&Path>,
+                    config.boot_rom(),
                     config.save_dir(),
                     config.palette(),
                 ) {

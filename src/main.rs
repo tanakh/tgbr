@@ -5,13 +5,13 @@ mod menu;
 mod rewinding;
 
 use anyhow::Result;
+use bevy_easings::EasingsPlugin;
 use bevy_tiled_camera::TiledCameraPlugin;
 use log::{error, info, log_enabled};
 use menu::MenuPlugin;
-use rewinding::{enter_rewinding_system, rewinding_system, AutoSavedState};
+use rewinding::{AutoSavedState, RewindingPlugin};
 use std::{
     collections::VecDeque,
-    fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -53,14 +53,21 @@ fn main(
     .add_plugins(DefaultPlugins)
     .add_plugin(TiledCameraPlugin)
     .add_plugin(AudioPlugin)
+    .add_plugin(EasingsPlugin)
     .add_plugin(EguiPlugin)
     .add_plugin(MenuPlugin)
     .add_plugin(GameBoyPlugin)
+    .add_plugin(RewindingPlugin)
     .add_event::<HotKey>()
     .add_startup_system(setup);
 
     if let Some(rom_file) = rom_file {
-        let gb = GameBoyState::new(rom_file, boot_rom, config.save_dir(), config.palette())?;
+        let gb = GameBoyState::new(
+            rom_file,
+            config.boot_rom(),
+            config.save_dir(),
+            config.palette(),
+        )?;
         app.insert_resource(gb);
         app.add_state(AppState::Running);
     } else {
@@ -97,7 +104,7 @@ pub struct GameBoyState {
 impl GameBoyState {
     fn new(
         rom_file: impl AsRef<Path>,
-        boot_rom: Option<impl AsRef<Path>>,
+        boot_rom: Option<Vec<u8>>,
         save_dir: impl AsRef<Path>,
         palette: &Palette,
     ) -> Result<Self> {
@@ -107,12 +114,6 @@ impl GameBoyState {
         }
 
         let backup_ram = load_backup_ram(rom_file.as_ref(), save_dir.as_ref())?;
-
-        let boot_rom = if let Some(boot_rom) = boot_rom {
-            Some(fs::read(boot_rom)?)
-        } else {
-            None
-        };
 
         let config = Config::default()
             .set_dmg_palette(palette)
@@ -165,13 +166,7 @@ impl Plugin for GameBoyPlugin {
                     .with_system(gameboy_system)
                     .after("input"),
             )
-            .add_system_set(SystemSet::on_exit(AppState::Running).with_system(exit_gameboy_system))
-            .add_system_set(
-                SystemSet::on_enter(AppState::Rewinding).with_system(enter_rewinding_system),
-            )
-            .add_system_set(
-                SystemSet::on_update(AppState::Rewinding).with_system(rewinding_system),
-            );
+            .add_system_set(SystemSet::on_exit(AppState::Running).with_system(exit_gameboy_system));
     }
 }
 
@@ -367,7 +362,6 @@ fn gameboy_system(
 
     let mut exec_frame = |queue: &mut VecDeque<Frame>| {
         state.gb.exec_frame();
-        state.frames += 1;
         if state.frames % config.auto_state_save_freq() == 0 {
             let saved_state = AutoSavedState {
                 data: state.gb.save_state(),
@@ -382,6 +376,7 @@ fn gameboy_system(
             info!("Auto state saved");
         }
         push_audio_queue(&mut *queue, state.gb.audio_buffer());
+        state.frames += 1;
     };
 
     if queue.len() < samples_per_frame * 2 {
@@ -429,241 +424,6 @@ fn copy_frame_buffer(data: &mut [u8], frame_buffer: &FrameBuffer) {
         }
     }
 }
-
-// struct App {
-//     gb: GameBoy,
-//     rom_file: PathBuf,
-
-//     state: AppState,
-//     frames: usize,
-//     timer: timer::Timer,
-//     state_save_slot: usize,
-//     auto_saved_states: VecDeque<AutoSavedState>,
-//     rewind_pos: usize,
-
-//     show_fps: bool,
-
-//     screen_width: usize,
-//     screen_height: usize,
-//     // canvas: sdl2::render::Canvas<sdl2::video::Window>,
-//     // surface: sdl2::surface::Surface<'static>,
-//     // texture_creator: sdl2::render::TextureCreator<sdl2::video::WindowContext>,
-//     // audio_queue: AudioQueue<i16>,
-//     // event_pump: EventPump,
-//     input_manager: InputManager,
-// }
-
-// impl App {
-//     fn new(rom_file: &Path, boot_rom: &Option<PathBuf>) -> Result<Self> {
-//         let rom = load_rom(&rom_file)?;
-//         if log_enabled!(log::Level::Info) {
-//             print_rom_info(&rom.info());
-//         }
-
-//         let backup_ram = load_backup_ram(&rom_file)?;
-
-//         let boot_rom = if let Some(boot_rom) = boot_rom {
-//             Some(fs::read(boot_rom)?)
-//         } else {
-//             None
-//         };
-
-//         let config = Config::default()
-//             .set_dmg_palette(&DMG_PALETTE)
-//             .set_boot_rom(boot_rom);
-
-//         let gb = GameBoy::new(rom, backup_ram, &config)?;
-
-//         let (width, height) = {
-//             let buf = gb.frame_buffer();
-//             (buf.width, buf.height)
-//         };
-
-//         let screen_width = width * SCALING;
-//         let screen_height = height * SCALING;
-
-//         let sdl_context = sdl2::init().map_err(|e| anyhow!("{e}"))?;
-//         let video_subsystem = sdl_context.video().map_err(|e| anyhow!("{e}"))?;
-
-//         let window = video_subsystem
-//             .window("TGB-R", screen_width as u32, screen_height as u32)
-//             .build()?;
-
-//         let canvas = window.into_canvas().present_vsync().build()?;
-//         let texture_creator = canvas.texture_creator();
-
-//         let surface =
-//             sdl2::surface::Surface::new(width as u32, height as u32, PixelFormatEnum::RGB24)
-//                 .map_err(|e| anyhow!("{e}"))?;
-
-//         let audio_subsystem = sdl_context.audio().map_err(|e| anyhow!("{e}"))?;
-//         let desired_spec = AudioSpecDesired {
-//             freq: Some(AUDIO_FREQUENCY as _),
-//             channels: Some(2),
-//             samples: Some(AUDIO_BUFFER_SAMPLES as _),
-//         };
-//         let audio_queue: AudioQueue<i16> = audio_subsystem
-//             .open_queue(None, &desired_spec)
-//             .map_err(|e| anyhow!("{e}"))?;
-//         audio_queue
-//             .queue_audio(&vec![0; AUDIO_BUFFER_SAMPLES * 2])
-//             .map_err(|e| anyhow!("{e}"))?;
-//         audio_queue.resume();
-
-//         let key_config = KeyConfig::default();
-//         let hotkeys = HotKeys::default();
-//         let input_manager = InputManager::new(&sdl_context, &key_config, &hotkeys)?;
-//         let event_pump = sdl_context.event_pump().map_err(|e| anyhow!("{e}"))?;
-
-//         Ok(Self {
-//             gb,
-//             rom_file: rom_file.to_owned(),
-
-//             state: AppState::Running,
-//             frames: 0,
-//             timer: timer::Timer::new(),
-//             state_save_slot: 0,
-//             auto_saved_states: VecDeque::new(),
-//             rewind_pos: 0,
-
-//             show_fps: true,
-
-//             screen_width,
-//             screen_height,
-//             // canvas,
-//             // surface,
-//             // texture_creator,
-//             // audio_queue,
-//             // event_pump,
-//             input_manager,
-//         })
-//     }
-
-//     fn run(&mut self) -> Result<()> {
-//         let ttf_context = sdl2::ttf::init().map_err(|e| anyhow!("{e}"))?;
-//         let font = ttf_context
-//             .load_font("./assets/fonts/PixelMplus12-Regular.ttf", 36)
-//             .map_err(|e| anyhow!("{e}"))?;
-
-//         while process_events(&mut self.event_pump) {
-//             self.input_manager.update(&self.event_pump);
-//             self.dispatch_event()?;
-
-//             match self.state {
-//                 AppState::Running => {
-//                     self.running(&font)?;
-//                     self.frames += 1;
-//                 }
-//                 AppState::Rewinding => {
-//                     self.rewinding()?;
-//                 }
-//                 AppState::Paused => todo!(),
-//             }
-//         }
-
-//         if let Some(ram) = self.gb.backup_ram() {
-//             save_backup_ram(&self.rom_file, &ram)?;
-//         } else {
-//             info!("No backup RAM to save");
-//         }
-
-//         Ok(())
-//     }
-
-//     fn running(&mut self, font: &sdl2::ttf::Font<'_, '_>) -> Result<()> {
-//         let input = self.input_manager.input();
-//         self.gb.set_input(&input);
-//         self.gb.exec_frame();
-
-//         if self.frames % AUTO_STATE_SAVE_FREQUENCY == 0 {
-//             self.auto_state_save()?;
-//         }
-
-//         let is_turbo = self.input_manager.hotkey(HotKey::Turbo).pressed();
-
-//         if !is_turbo || self.frames % FRAME_SKIP_ON_TURBO == 0 {
-//             let texture = self.to_texture(self.gb.frame_buffer())?;
-//             self.canvas
-//                 .copy(&texture, None, None)
-//                 .map_err(|e| anyhow!("{e}"))?;
-//             unsafe { texture.destroy() };
-
-//             if self.show_fps {
-//                 self.render_fps(font)?;
-//             }
-//             self.canvas.present();
-//         }
-
-//         if !is_turbo {
-//             self.sync_audio();
-//         }
-//         self.queue_audio()?;
-
-//         let fps = if !is_turbo { 999.9 } else { 999.0 };
-//         self.timer.wait_for_frame(fps);
-//         Ok(())
-//     }
-
-//     fn rewinding(&mut self) -> Result<()> {
-//         self.canvas.set_draw_color(Color::RGB(0, 0, 0));
-//         self.canvas.clear();
-
-//         self.canvas.set_draw_color(Color::RGB(64, 64, 64));
-//         self.canvas
-//             .fill_rect(self.convert_coord((0.5, 5.0 / 6.0), 1.0, 1.0 / 3.0))
-//             .map_err(|e| anyhow!("{e}"))?;
-
-//         self.canvas
-//             .copy(
-//                 &self.auto_saved_states[self.rewind_pos].thumbnail,
-//                 None,
-//                 self.convert_coord((0.5, 1.0 / 3.0), 2.0 / 3.0 * 0.95, 2.0 / 3.0 * 0.95),
-//             )
-//             .map_err(|e| anyhow!("{e}"))?;
-
-//         self.canvas.set_draw_color(Color::RGB(200, 200, 200));
-//         self.canvas
-//             .fill_rect(self.convert_coord((0.5, 5.0 / 6.0), 0.2, 0.2))
-//             .map_err(|e| anyhow!("{e}"))?;
-
-//         for i in -2..=2 {
-//             let ix = self.rewind_pos as isize + i;
-//             if !(ix >= 0 && ix < self.auto_saved_states.len() as isize) {
-//                 continue;
-//             }
-//             let ix = ix as usize;
-//             let x = 0.5 + (i * 2) as f64 * 0.1;
-//             let y = 5.0 / 6.0;
-//             let scale = 0.2 * if i == 0 { 0.95 } else { 0.85 };
-
-//             self.canvas
-//                 .copy(
-//                     &self.auto_saved_states[ix].thumbnail,
-//                     None,
-//                     self.convert_coord((x, y), scale, scale),
-//                 )
-//                 .map_err(|e| anyhow!("{e}"))?;
-//         }
-
-//         self.canvas.present();
-//         self.timer.wait_for_frame(FPS);
-
-//         Ok(())
-//     }
-
-//     fn copy_to_surface(&self, surface: &mut Surface, frame_buffer: &FrameBuffer) {
-//         surface.with_lock_mut(|r| {
-//             for y in 0..frame_buffer.height {
-//                 for x in 0..frame_buffer.width {
-//                     let ix = y * frame_buffer.width + x;
-//                     let p = frame_buffer.get(x, y);
-//                     r[ix * 3 + 0] = p.r;
-//                     r[ix * 3 + 1] = p.g;
-//                     r[ix * 3 + 2] = p.b;
-//                 }
-//             }
-//         });
-//     }
 
 //     fn render_fps(&mut self, font: &sdl2::ttf::Font<'_, '_>) -> Result<()> {
 //         let text = format!("{:5.02}", self.timer.fps());

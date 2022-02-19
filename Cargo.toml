@@ -26,6 +26,7 @@ tempfile = "3.3.0"
 zip = "0.5.13"
 
 bevy = { version = "0.6.1", features = ["serialize"] }
+bevy_easings = "0.6.0"
 bevy_egui = "0.11.1"
 bevy_kira_audio = "0.8.0"
 bevy_tiled_camera = "0.3.0"

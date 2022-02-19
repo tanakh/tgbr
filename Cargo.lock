@@ -413,6 +413,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_easings"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36e444ca4b140fdb8799edfa7e9f4da1ec036d594a7274e3459d04aee8e22503"
+dependencies = [
+ "bevy",
+ "interpolation",
+]
+
+[[package]]
 name = "bevy_ecs"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2232,6 +2242,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "interpolation"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3b7357d2bbc5ee92f8e899ab645233e43d21407573cceb37fed8bc3dede2c02"
+
+[[package]]
 name = "io-kit-sys"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3610,6 +3626,7 @@ dependencies = [
  "argopt",
  "base64",
  "bevy",
+ "bevy_easings",
  "bevy_egui",
  "bevy_kira_audio",
  "bevy_tiled_camera",

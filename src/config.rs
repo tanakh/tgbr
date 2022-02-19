@@ -47,6 +47,16 @@ const PALETTE_PRESET: Palette = {
     ]
 };
 
+#[rustfmt::skip]
+const BOOT_ROMS: &[(&str, &[u8])] = &[
+    ("SameBoy-DMG", include_bytes!("../assets/sameboy-bootroms/dmg_boot.bin")),
+    ("SameBoy-CGB", include_bytes!("../assets/sameboy-bootroms/cgb_boot.bin")),
+    ("SameBoy-SGB", include_bytes!("../assets/sameboy-bootroms/sgb_boot.bin")),
+    ("SameBoy-SGB2",include_bytes!("../assets/sameboy-bootroms/sgb2_boot.bin")),
+    ("SameBoy-CGB", include_bytes!("../assets/sameboy-bootroms/cgb_boot.bin")),
+    ("SameBoy-AGB", include_bytes!("../assets/sameboy-bootroms/agb_boot.bin")),
+];
+
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     save_dir: PathBuf,
@@ -55,6 +65,7 @@ pub struct Config {
     scaling: usize,
     auto_state_save_freq: usize,
     auto_state_save_limit: usize,
+    boot_rom: Option<String>,
     palette: [tgbr_core::Color; 4],
     key_config: KeyConfig,
     hotkeys: HotKeys,
@@ -84,6 +95,7 @@ impl Default for Config {
             scaling: 4,
             auto_state_save_freq: 60,
             auto_state_save_limit: 10 * 60,
+            boot_rom: Some("SameBoy-DMG".to_owned()),
             palette: PALETTE_PRESET,
             key_config: KeyConfig::default(),
             hotkeys: HotKeys::default(),
@@ -133,6 +145,17 @@ impl Config {
 
     pub fn set_palette(&mut self, palette: Palette) {
         self.palette = palette;
+    }
+
+    pub fn boot_rom(&self) -> Option<Vec<u8>> {
+        self.boot_rom.as_ref().map(|r| {
+            BOOT_ROMS
+                .iter()
+                .find(|(name, _)| name == &r)
+                .unwrap()
+                .1
+                .to_vec()
+        })
     }
 
     pub fn key_config(&self) -> &KeyConfig {
