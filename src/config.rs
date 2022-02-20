@@ -216,7 +216,7 @@ impl PersistentState {
             self.recent.retain(|p| p != &path);
         }
         self.recent.push_front(path);
-        while self.recent.len() > 10 {
+        while self.recent.len() > 20 {
             self.recent.pop_back();
         }
     }

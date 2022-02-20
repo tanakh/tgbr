@@ -19,6 +19,7 @@ use std::{
 use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    window::WindowMode,
 };
 use bevy_egui::EguiPlugin;
 use bevy_kira_audio::{AudioPlugin, AudioStream, AudioStreamPlugin, Frame, StreamedAudio};
@@ -49,6 +50,7 @@ fn main(
     })
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
     .init_resource::<UiState>()
+    .init_resource::<FullscreenState>()
     .insert_resource(Msaa { samples: 4 })
     .add_plugins(DefaultPlugins)
     .add_plugin(TiledCameraPlugin)
@@ -59,6 +61,8 @@ fn main(
     .add_plugin(GameBoyPlugin)
     .add_plugin(RewindingPlugin)
     .add_event::<HotKey>()
+    .add_event::<WindowControlEvent>()
+    .add_system(window_control_event)
     .add_startup_system(setup);
 
     if let Some(rom_file) = rom_file {
@@ -188,8 +192,8 @@ impl AudioStream for AudioStreamQueue {
 }
 
 #[derive(Default)]
-struct UiState {
-    state_save_slot: usize,
+pub struct UiState {
+    pub state_save_slot: usize,
 }
 
 #[derive(Component)]
@@ -197,11 +201,10 @@ pub struct ScreenSprite;
 
 fn setup_gameboy_system(
     mut commands: Commands,
-    windows: ResMut<Windows>,
-    config: Res<config::Config>,
     gb_state: Res<GameBoyState>,
     mut images: ResMut<Assets<Image>>,
     audio: Res<StreamedAudio<AudioStreamQueue>>,
+    mut event: EventWriter<WindowControlEvent>,
 ) {
     let width = gb_state.gb.frame_buffer().width as u32;
     let height = gb_state.gb.frame_buffer().height as u32;
@@ -234,24 +237,75 @@ fn setup_gameboy_system(
 
     commands.insert_resource(AudioStreamQueue { queue: audio_queue });
 
-    resume_gameboy_system(windows, config, gb_state);
+    event.send(WindowControlEvent::Restore);
 }
 
-fn resume_gameboy_system(
-    mut windows: ResMut<Windows>,
-    config: Res<config::Config>,
-    gb_state: Res<GameBoyState>,
-) {
-    let window = windows.get_primary_mut().unwrap();
-    let scale = config.scaling() as f32;
-    let width = gb_state.gb.frame_buffer().width as u32;
-    let height = gb_state.gb.frame_buffer().height as u32;
-    window.set_resolution(width as f32 * scale, height as f32 * scale);
+fn resume_gameboy_system(mut event: EventWriter<WindowControlEvent>) {
+    event.send(WindowControlEvent::Restore);
 }
 
 fn exit_gameboy_system(mut commands: Commands, screen_entity: Query<Entity, With<ScreenSprite>>) {
     let screen_entity = screen_entity.single();
     commands.entity(screen_entity).despawn();
+}
+
+#[derive(Default)]
+pub struct FullscreenState(pub bool);
+
+pub enum WindowControlEvent {
+    ToggleFullscreen,
+    ChangeScale(usize),
+    Restore,
+}
+
+fn window_control_event(
+    mut windows: ResMut<Windows>,
+    mut event: EventReader<WindowControlEvent>,
+    mut fullscreen_state: ResMut<FullscreenState>,
+    mut config: ResMut<config::Config>,
+    app_state: Res<State<AppState>>,
+) {
+    let running = app_state.current() == &AppState::Running;
+
+    for event in event.iter() {
+        match event {
+            WindowControlEvent::ToggleFullscreen => {
+                let window = windows.get_primary_mut().unwrap();
+                fullscreen_state.0 = !fullscreen_state.0;
+
+                if fullscreen_state.0 {
+                    window.set_mode(WindowMode::BorderlessFullscreen);
+                } else {
+                    window.set_mode(WindowMode::Windowed);
+                }
+                if running {
+                    let window = windows.get_primary_mut().unwrap();
+                    restore_window(window, fullscreen_state.0, config.scaling());
+                }
+            }
+            WindowControlEvent::ChangeScale(scale) => {
+                config.set_scaling(*scale);
+                if running {
+                    let window = windows.get_primary_mut().unwrap();
+                    restore_window(window, fullscreen_state.0, config.scaling());
+                }
+            }
+            WindowControlEvent::Restore => {
+                let window = windows.get_primary_mut().unwrap();
+                restore_window(window, fullscreen_state.0, config.scaling());
+            }
+        }
+    }
+}
+
+fn restore_window(window: &mut Window, fullscreen: bool, scaling: usize) {
+    let width = 160;
+    let height = 144;
+
+    if !fullscreen {
+        let scale = scaling as f32;
+        window.set_resolution(width as f32 * scale, height as f32 * scale);
+    }
 }
 
 fn process_hotkey(
@@ -260,6 +314,7 @@ fn process_hotkey(
     mut app_state: ResMut<State<AppState>>,
     mut gb_state: Option<ResMut<GameBoyState>>,
     mut ui_state: ResMut<UiState>,
+    mut window_control_event: EventWriter<WindowControlEvent>,
 ) {
     for hotkey in reader.iter() {
         match hotkey {
@@ -325,7 +380,9 @@ fn process_hotkey(
             HotKey::Menu => {
                 app_state.set(AppState::Menu).unwrap();
             }
-            HotKey::FullScreen => {}
+            HotKey::FullScreen => {
+                window_control_event.send(WindowControlEvent::ToggleFullscreen);
+            }
 
             HotKey::Turbo => {}
         }

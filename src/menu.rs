@@ -2,14 +2,14 @@ use std::path::PathBuf;
 
 use crate::{
     config::{Config, PersistentState},
-    AppState, GameBoyState,
+    AppState, FullscreenState, GameBoyState, WindowControlEvent,
 };
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{egui, EguiContext};
 
 pub struct MenuPlugin;
 
-enum MenuEvent {
+pub enum MenuEvent {
     OpenRomFile(PathBuf),
 }
 
@@ -25,9 +25,16 @@ impl Plugin for MenuPlugin {
     }
 }
 
-fn menu_setup(mut windows: ResMut<Windows>, mut egui_ctx: ResMut<EguiContext>) {
-    let window = windows.get_primary_mut().unwrap();
-    window.set_resolution(960.0, 540.0);
+fn menu_setup(
+    mut commands: Commands,
+    mut windows: ResMut<Windows>,
+    mut egui_ctx: ResMut<EguiContext>,
+    fullscreen_state: Res<FullscreenState>,
+) {
+    if !fullscreen_state.0 {
+        let window = windows.get_primary_mut().unwrap();
+        window.set_resolution(960.0, 540.0);
+    }
 
     let mut fonts = egui::FontDefinitions::default();
 
@@ -41,8 +48,14 @@ fn menu_setup(mut windows: ResMut<Windows>, mut egui_ctx: ResMut<EguiContext>) {
         egui::TextStyle::Button,
         (egui::FontFamily::Proportional, 24.0),
     );
+    fonts.family_and_size.insert(
+        egui::TextStyle::Body,
+        (egui::FontFamily::Proportional, 24.0),
+    );
 
     egui_ctx.ctx_mut().set_fonts(fonts);
+
+    commands.insert_resource(MenuTab::File);
 }
 
 fn menu_event_system(
@@ -50,7 +63,7 @@ fn menu_event_system(
     mut event: EventReader<MenuEvent>,
     mut app_state: ResMut<State<AppState>>,
     mut persistent_state: ResMut<PersistentState>,
-    config: Res<Config>,
+    config: ResMut<Config>,
 ) {
     for event in event.iter() {
         match event {
@@ -82,118 +95,84 @@ enum MenuTab {
 }
 
 fn menu_system(
+    config: Res<Config>,
     persistent_state: Res<PersistentState>,
     mut egui_ctx: ResMut<EguiContext>,
     mut app_state: ResMut<State<AppState>>,
+    mut menu_tab: ResMut<MenuTab>,
     gb_state: Option<Res<GameBoyState>>,
     mut exit: EventWriter<AppExit>,
     mut menu_event: EventWriter<MenuEvent>,
+    mut window_control_event: EventWriter<WindowControlEvent>,
+    fullscreen_state: Res<FullscreenState>,
 ) {
     egui::CentralPanel::default().show(egui_ctx.ctx_mut(), |ui| {
         let width = ui.available_width();
         egui::SidePanel::left("left_panel")
-            .frame(egui::Frame::default())
+            // .frame(egui::Frame::default())
             .show_inside(ui, |ui| {
                 ui.set_width(width / 4.0);
-                if ui.button("Setting").clicked() {
-                    todo!();
-                }
-                if ui.button("Quit").clicked() {
-                    exit.send(AppExit);
-                }
+                ui.vertical_centered_justified(|ui| {
+                    if ui.button("File").clicked() {
+                        *menu_tab = MenuTab::File;
+                    }
+                    if ui.button("Setting").clicked() {
+                        *menu_tab = MenuTab::Setting;
+                    }
+                    if ui.button("Quit").clicked() {
+                        exit.send(AppExit);
+                    }
+                });
             });
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.with_layout(egui::Layout::default().with_cross_justify(true), |ui| {
-                if gb_state.is_some() {
-                    if ui.button("Resume").clicked() {
-                        app_state.set(AppState::Running).unwrap();
+
+        egui::CentralPanel::default().show_inside(ui, |ui| match *menu_tab {
+            MenuTab::File => {
+                ui.with_layout(egui::Layout::default().with_cross_justify(true), |ui| {
+                    if gb_state.is_some() {
+                        if ui.button("Resume").clicked() {
+                            app_state.set(AppState::Running).unwrap();
+                        }
+                        ui.separator();
                     }
+
+                    ui.label("Load ROM");
+                    if ui.button("Open File").clicked() {
+                        let file = rfd::FileDialog::new()
+                            .add_filter("GameBoy ROM file", &["gb", "gbc", "zip"])
+                            .pick_file();
+                        if let Some(file) = file {
+                            menu_event.send(MenuEvent::OpenRomFile(file));
+                        }
+                    }
+
+                    ui.separator();
+                    ui.label("Recent Files");
+
+                    for recent in &persistent_state.recent {
+                        if ui
+                            .button(recent.file_name().unwrap().to_string_lossy().to_string())
+                            .clicked()
+                        {
+                            menu_event.send(MenuEvent::OpenRomFile(recent.clone()));
+                        }
+                    }
+                });
+            }
+            MenuTab::Setting => {
+                ui.label("Graphics");
+
+                let mut fullscreen = fullscreen_state.0;
+                if ui.checkbox(&mut fullscreen, "FullScreen").changed() {
+                    window_control_event.send(WindowControlEvent::ToggleFullscreen);
                 }
 
-                if ui.button("Load ROM").clicked() {
-                    let file = rfd::FileDialog::new()
-                        .add_filter("GameBoy ROM file", &["gb", "gbc", "zip"])
-                        .pick_file();
-                    if let Some(file) = file {
-                        menu_event.send(MenuEvent::OpenRomFile(file));
-                    }
-                }
+                ui.label("Window Scale");
 
-                ui.separator();
-                ui.label("Recent Files");
-
-                for recent in &persistent_state.recent {
-                    if ui
-                        .button(recent.file_name().unwrap().to_string_lossy().to_string())
-                        .clicked()
-                    {
-                        menu_event.send(MenuEvent::OpenRomFile(recent.clone()));
-                    }
+                let mut scale = config.scaling();
+                if ui.add(egui::Slider::new(&mut scale, 1..=8)).changed() {
+                    window_control_event.send(WindowControlEvent::ChangeScale(scale));
                 }
-            })
+            }
         });
     });
-
-    // let flip_fullscreen = |windows: &mut ResMut<Windows>| {
-    //     let window = windows.get_primary_mut().unwrap();
-    //     let cur_mode = window.mode();
-    //     match cur_mode {
-    //         WindowMode::Windowed => window.set_mode(WindowMode::BorderlessFullscreen),
-    //         WindowMode::BorderlessFullscreen => window.set_mode(WindowMode::Windowed),
-    //         _ => unreachable!(),
-    //     }
-    // };
-
-    // let mut set_window_scale = |windows: &mut ResMut<Windows>, scale: usize| {
-    //     let window = windows.get_primary_mut().unwrap();
-    //     let (w, h) = calc_window_size(scale);
-
-    //     window.set_resolution(w, h);
-
-    //     // for mut trans in screen_trans.iter_mut() {
-    //     //     *trans = Transform::from_scale(Vec3::new(scale as f32, scale as f32, 1.0))
-    //     //         .with_translation(Vec3::new(0.0, -((MENU_HEIGHT / 2) as f32), 0.0));
-    //     // }
-    // };
-
-    // egui::TopBottomPanel::top("top_panel").show(egui_ctx.ctx_mut(), |ui| {
-    //     egui::menu::bar(ui, |ui| {
-    //         egui::menu::menu_button(ui, "File", |ui| {
-    //             ui.menu_button("Open Recent", |ui| {
-    //                 ui.set_width_range(150.0..=300.0);
-    //                 for recent_file in &persistent_state.recent {
-    //                     let text = recent_file.file_name().unwrap().to_str().unwrap();
-    //                     let text = if text.chars().count() > 32 {
-    //                         format!("{}...", &text.chars().take(32).collect::<String>())
-    //                     } else {
-    //                         text.to_string()
-    //                     };
-    //                     if ui.button(text).clicked() {
-    //                         ui.close_menu();
-    //                         load_rom_file = Some(recent_file.to_owned());
-    //                     }
-    //                 }
-    //             });
-    //             ui.separator();
-    //             if ui.button("Quit").clicked() {
-    //                 exit.send(AppExit);
-    //             }
-    //         });
-    //         egui::menu::menu_button(ui, "Option", |ui| {
-    //             if ui.button("Fullscreen").clicked() {
-    //                 flip_fullscreen(&mut windows);
-    //                 ui.close_menu();
-    //             }
-    //             ui.menu_button("Scale", |ui| {
-    //                 for i in 1..=8 {
-    //                     if ui.button(format!("{}x", i)).clicked() {
-    //                         ui.close_menu();
-    //                         set_window_scale(&mut windows, i);
-    //                         config.set_scaling(i);
-    //                     }
-    //                 }
-    //             });
-    //         });
-    //     });
-    // });
 }
