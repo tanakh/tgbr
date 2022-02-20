@@ -127,16 +127,31 @@ impl Config {
         self.save().unwrap();
     }
 
+    pub fn show_fps(&self) -> bool {
+        self.show_fps
+    }
+
+    pub fn set_show_fps(&mut self, show_fps: bool) {
+        self.show_fps = show_fps;
+        self.save().unwrap();
+    }
+
     pub fn save_dir(&self) -> &Path {
         &self.save_dir
     }
 
     pub fn set_save_dir(&mut self, save_dir: PathBuf) {
         self.save_dir = save_dir;
+        self.save().unwrap();
     }
 
     pub fn state_dir(&self) -> &PathBuf {
         &self.state_dir
+    }
+
+    pub fn set_state_dir(&mut self, state_dir: PathBuf) {
+        self.state_dir = state_dir;
+        self.save().unwrap();
     }
 
     pub fn palette(&self) -> &Palette {
@@ -145,6 +160,7 @@ impl Config {
 
     pub fn set_palette(&mut self, palette: Palette) {
         self.palette = palette;
+        self.save().unwrap();
     }
 
     pub fn boot_rom(&self) -> Option<Vec<u8>> {

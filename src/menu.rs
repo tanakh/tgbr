@@ -53,6 +53,11 @@ fn menu_setup(
         (egui::FontFamily::Proportional, 24.0),
     );
 
+    fonts.family_and_size.insert(
+        egui::TextStyle::Heading,
+        (egui::FontFamily::Proportional, 32.0),
+    );
+
     egui_ctx.ctx_mut().set_fonts(fonts);
 
     commands.insert_resource(MenuTab::File);
@@ -95,7 +100,7 @@ enum MenuTab {
 }
 
 fn menu_system(
-    config: Res<Config>,
+    mut config: ResMut<Config>,
     persistent_state: Res<PersistentState>,
     mut egui_ctx: ResMut<EguiContext>,
     mut app_state: ResMut<State<AppState>>,
@@ -108,26 +113,25 @@ fn menu_system(
 ) {
     egui::CentralPanel::default().show(egui_ctx.ctx_mut(), |ui| {
         let width = ui.available_width();
-        egui::SidePanel::left("left_panel")
-            // .frame(egui::Frame::default())
-            .show_inside(ui, |ui| {
-                ui.set_width(width / 4.0);
-                ui.vertical_centered_justified(|ui| {
-                    if ui.button("File").clicked() {
-                        *menu_tab = MenuTab::File;
-                    }
-                    if ui.button("Setting").clicked() {
-                        *menu_tab = MenuTab::Setting;
-                    }
-                    if ui.button("Quit").clicked() {
-                        exit.send(AppExit);
-                    }
-                });
+        egui::SidePanel::left("left_panel").show_inside(ui, |ui| {
+            ui.set_width(width / 4.0);
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                ui.label("");
+                if ui.button("📁File").clicked() {
+                    *menu_tab = MenuTab::File;
+                }
+                if ui.button("🔧Setting").clicked() {
+                    *menu_tab = MenuTab::Setting;
+                }
+                if ui.button("↩️Quit").clicked() {
+                    exit.send(AppExit);
+                }
             });
+        });
 
         egui::CentralPanel::default().show_inside(ui, |ui| match *menu_tab {
             MenuTab::File => {
-                ui.with_layout(egui::Layout::default().with_cross_justify(true), |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                     if gb_state.is_some() {
                         if ui.button("Resume").clicked() {
                             app_state.set(AppState::Running).unwrap();
@@ -159,19 +163,75 @@ fn menu_system(
                 });
             }
             MenuTab::Setting => {
-                ui.label("Graphics");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                        ui.heading("General Settings");
+                        ui.group(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Save file directory");
+                                if ui.button("Change").clicked() {
+                                    let dir = rfd::FileDialog::new()
+                                        .set_directory(config.save_dir())
+                                        .pick_folder();
+                                    if let Some(dir) = dir {
+                                        config.set_save_dir(dir);
+                                    }
+                                }
+                            });
+                            let s = config.save_dir().display().to_string();
+                            ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
 
-                let mut fullscreen = fullscreen_state.0;
-                if ui.checkbox(&mut fullscreen, "FullScreen").changed() {
-                    window_control_event.send(WindowControlEvent::ToggleFullscreen);
-                }
+                            ui.horizontal(|ui| {
+                                ui.label("State save directory");
+                                if ui.button("Change").clicked() {
+                                    let dir = rfd::FileDialog::new()
+                                        .set_directory(config.state_dir())
+                                        .pick_folder();
+                                    if let Some(dir) = dir {
+                                        config.set_state_dir(dir);
+                                    }
+                                }
+                            });
+                            let s = config.save_dir().display().to_string();
+                            ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
 
-                ui.label("Window Scale");
+                            ui.label("Boot ROM (TODO)");
+                            ui.radio(false, "Do not use boot ROM");
+                            ui.radio(false, "Use internal boot ROM");
+                            ui.radio(false, "Use specified boot ROM file");
+                        });
 
-                let mut scale = config.scaling();
-                if ui.add(egui::Slider::new(&mut scale, 1..=8)).changed() {
-                    window_control_event.send(WindowControlEvent::ChangeScale(scale));
-                }
+                        ui.heading("Graphics");
+                        ui.group(|ui| {
+                            ui.label("Palette");
+                            ui.label("UNDERCONSTRUCTIONS");
+
+                            let mut show_fps = config.show_fps();
+                            if ui.checkbox(&mut show_fps, "Display FPS").changed() {
+                                config.set_show_fps(show_fps);
+                            }
+
+                            let mut fullscreen = fullscreen_state.0;
+                            if ui.checkbox(&mut fullscreen, "FullScreen").changed() {
+                                window_control_event.send(WindowControlEvent::ToggleFullscreen);
+                            }
+
+                            ui.horizontal(|ui| {
+                                ui.label("Window Scale");
+
+                                let mut scale = config.scaling();
+                                if ui.add(egui::Slider::new(&mut scale, 1..=8)).changed() {
+                                    window_control_event
+                                        .send(WindowControlEvent::ChangeScale(scale));
+                                }
+                            });
+                        });
+
+                        ui.heading("Audio (TODO)");
+
+                        ui.heading("Key Config (TODO)");
+                    });
+                });
             }
         });
     });

@@ -17,6 +17,7 @@ use std::{
 };
 
 use bevy::{
+    diagnostic::{Diagnostics, DiagnosticsPlugin, FrameTimeDiagnosticsPlugin},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::WindowMode,
@@ -53,6 +54,8 @@ fn main(
     .init_resource::<FullscreenState>()
     .insert_resource(Msaa { samples: 4 })
     .add_plugins(DefaultPlugins)
+    .add_plugin(DiagnosticsPlugin)
+    .add_plugin(FrameTimeDiagnosticsPlugin)
     .add_plugin(TiledCameraPlugin)
     .add_plugin(AudioPlugin)
     .add_plugin(EasingsPlugin)
@@ -168,6 +171,7 @@ impl Plugin for GameBoyPlugin {
             .add_system_set(
                 SystemSet::on_update(AppState::Running)
                     .with_system(gameboy_system)
+                    .with_system(fps_system)
                     .after("input"),
             )
             .add_system_set(SystemSet::on_exit(AppState::Running).with_system(exit_gameboy_system));
@@ -199,10 +203,17 @@ pub struct UiState {
 #[derive(Component)]
 pub struct ScreenSprite;
 
+#[derive(Component)]
+pub struct FpsText;
+
+#[derive(Component)]
+pub struct FpsTextBg;
+
 fn setup_gameboy_system(
     mut commands: Commands,
     gb_state: Res<GameBoyState>,
     mut images: ResMut<Assets<Image>>,
+    mut fonts: ResMut<Assets<Font>>,
     audio: Res<StreamedAudio<AudioStreamQueue>>,
     mut event: EventWriter<WindowControlEvent>,
 ) {
@@ -229,6 +240,38 @@ fn setup_gameboy_system(
 
     commands.insert_resource(GameScreen(texture));
 
+    let fps_font =
+        Font::try_from_bytes(include_bytes!("../assets/fonts/PixelMplus12-Regular.ttf").to_vec())
+            .unwrap();
+    commands
+        .spawn_bundle(Text2dBundle {
+            text: Text::with_section(
+                "",
+                TextStyle {
+                    font: fonts.add(fps_font),
+                    font_size: 24.0,
+                    color: Color::WHITE,
+                    ..Default::default()
+                },
+                TextAlignment::default(),
+            ),
+            transform: Transform::from_xyz(52.0, 72.0, 2.0).with_scale(Vec3::splat(0.5)),
+            ..Default::default()
+        })
+        .insert(FpsText);
+
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::rgba(0.0, 0.0, 0.0, 0.75),
+                custom_size: Some(Vec2::new(30.0, 12.0)),
+                ..Default::default()
+            },
+            transform: Transform::from_xyz(65.0, 66.0, 1.0),
+            ..Default::default()
+        })
+        .insert(FpsTextBg);
+
     let audio_queue = Arc::new(Mutex::new(VecDeque::new()));
 
     audio.stream(AudioStreamQueue {
@@ -244,9 +287,15 @@ fn resume_gameboy_system(mut event: EventWriter<WindowControlEvent>) {
     event.send(WindowControlEvent::Restore);
 }
 
-fn exit_gameboy_system(mut commands: Commands, screen_entity: Query<Entity, With<ScreenSprite>>) {
-    let screen_entity = screen_entity.single();
-    commands.entity(screen_entity).despawn();
+fn exit_gameboy_system(
+    mut commands: Commands,
+    screen_entity: Query<Entity, With<ScreenSprite>>,
+    fps_text: Query<Entity, With<FpsText>>,
+    fps_text_bg: Query<Entity, With<FpsTextBg>>,
+) {
+    commands.entity(screen_entity.single()).despawn();
+    commands.entity(fps_text.single()).despawn();
+    commands.entity(fps_text_bg.single()).despawn();
 }
 
 #[derive(Default)]
@@ -305,87 +354,6 @@ fn restore_window(window: &mut Window, fullscreen: bool, scaling: usize) {
     if !fullscreen {
         let scale = scaling as f32;
         window.set_resolution(width as f32 * scale, height as f32 * scale);
-    }
-}
-
-fn process_hotkey(
-    config: Res<config::Config>,
-    mut reader: EventReader<HotKey>,
-    mut app_state: ResMut<State<AppState>>,
-    mut gb_state: Option<ResMut<GameBoyState>>,
-    mut ui_state: ResMut<UiState>,
-    mut window_control_event: EventWriter<WindowControlEvent>,
-) {
-    for hotkey in reader.iter() {
-        match hotkey {
-            HotKey::Reset => {
-                if let Some(state) = &mut gb_state {
-                    state.gb.reset();
-                    info!("Reset machine");
-                }
-            }
-            HotKey::StateSave => {
-                if let Some(state) = &mut gb_state {
-                    let data = state.gb.save_state();
-                    save_state_data(
-                        &state.rom_file,
-                        ui_state.state_save_slot,
-                        &data,
-                        config.state_dir(),
-                    )
-                    .unwrap();
-                    info!("State saved to slot {}", ui_state.state_save_slot);
-                }
-            }
-            HotKey::StateLoad => {
-                if let Some(state) = &mut gb_state {
-                    let res = (|| {
-                        let data = load_state_data(
-                            &state.rom_file,
-                            ui_state.state_save_slot,
-                            config.state_dir(),
-                        )?;
-                        state.gb.load_state(&data)
-                    })();
-                    if let Err(e) = res {
-                        error!("Failed to load state: {}", e);
-                    }
-                }
-            }
-            HotKey::NextSlot => {
-                ui_state.state_save_slot += 1;
-                info!("State save slot changed: {}", ui_state.state_save_slot);
-            }
-            HotKey::PrevSlot => {
-                ui_state.state_save_slot = ui_state.state_save_slot.saturating_sub(1);
-                info!("State save slot changed: {}", ui_state.state_save_slot);
-            }
-            HotKey::Rewind => {
-                if app_state.current() == &AppState::Running {
-                    let gb_state = gb_state.as_mut().unwrap();
-
-                    let saved_state = AutoSavedState {
-                        data: gb_state.gb.save_state(),
-                        thumbnail: frame_buffer_to_image(gb_state.gb.frame_buffer()),
-                    };
-
-                    gb_state.auto_saved_states.push_back(saved_state);
-                    if gb_state.auto_saved_states.len() > config.auto_state_save_limit() {
-                        gb_state.auto_saved_states.pop_front();
-                    }
-
-                    app_state.push(AppState::Rewinding).unwrap();
-                }
-            }
-            HotKey::Menu => {
-                app_state.set(AppState::Menu).unwrap();
-            }
-            HotKey::FullScreen => {
-                window_control_event.send(WindowControlEvent::ToggleFullscreen);
-            }
-
-            HotKey::Turbo => {}
-        }
     }
 }
 
@@ -482,36 +450,104 @@ fn copy_frame_buffer(data: &mut [u8], frame_buffer: &FrameBuffer) {
     }
 }
 
-//     fn render_fps(&mut self, font: &sdl2::ttf::Font<'_, '_>) -> Result<()> {
-//         let text = format!("{:5.02}", self.timer.fps());
-//         let fps_tex = font
-//             .render(&text[0..5])
-//             .blended(Color::WHITE)?
-//             .as_texture(&self.texture_creator)?;
+fn fps_system(
+    config: Res<config::Config>,
+    diagnostics: ResMut<Diagnostics>,
+    mut q: QuerySet<(
+        QueryState<(&mut Text, &mut Visibility), With<FpsText>>,
+        QueryState<&mut Visibility, With<FpsTextBg>>,
+    )>,
+) {
+    let mut q0 = q.q0();
+    let (mut text, mut visibility) = q0.single_mut();
+    visibility.is_visible = config.show_fps();
+    let fps_diag = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS).unwrap();
+    let fps = fps_diag.value().unwrap_or(0.0);
+    let fps = format!("{fps:5.02}");
+    text.sections[0].value = fps.chars().take(5).collect();
 
-//         let (w, h) = {
-//             let q = fps_tex.query();
-//             (q.width, q.height)
-//         };
+    let mut q1 = q.q1();
+    let mut visibility_bg = q1.single_mut();
+    visibility_bg.is_visible = config.show_fps();
+}
 
-//         let r1 = Rect::new(
-//             self.screen_width as i32 - w as i32 * 11 / 10,
-//             0,
-//             w * 11 / 10,
-//             h,
-//         );
-//         let r2 = Rect::new(self.screen_width as i32 - w as i32, 0, w, h);
+fn process_hotkey(
+    config: Res<config::Config>,
+    mut reader: EventReader<HotKey>,
+    mut app_state: ResMut<State<AppState>>,
+    mut gb_state: Option<ResMut<GameBoyState>>,
+    mut ui_state: ResMut<UiState>,
+    mut window_control_event: EventWriter<WindowControlEvent>,
+) {
+    for hotkey in reader.iter() {
+        match hotkey {
+            HotKey::Reset => {
+                if let Some(state) = &mut gb_state {
+                    state.gb.reset();
+                    info!("Reset machine");
+                }
+            }
+            HotKey::StateSave => {
+                if let Some(state) = &mut gb_state {
+                    let data = state.gb.save_state();
+                    save_state_data(
+                        &state.rom_file,
+                        ui_state.state_save_slot,
+                        &data,
+                        config.state_dir(),
+                    )
+                    .unwrap();
+                    info!("State saved to slot {}", ui_state.state_save_slot);
+                }
+            }
+            HotKey::StateLoad => {
+                if let Some(state) = &mut gb_state {
+                    let res = (|| {
+                        let data = load_state_data(
+                            &state.rom_file,
+                            ui_state.state_save_slot,
+                            config.state_dir(),
+                        )?;
+                        state.gb.load_state(&data)
+                    })();
+                    if let Err(e) = res {
+                        error!("Failed to load state: {}", e);
+                    }
+                }
+            }
+            HotKey::NextSlot => {
+                ui_state.state_save_slot += 1;
+                info!("State save slot changed: {}", ui_state.state_save_slot);
+            }
+            HotKey::PrevSlot => {
+                ui_state.state_save_slot = ui_state.state_save_slot.saturating_sub(1);
+                info!("State save slot changed: {}", ui_state.state_save_slot);
+            }
+            HotKey::Rewind => {
+                if app_state.current() == &AppState::Running {
+                    let gb_state = gb_state.as_mut().unwrap();
 
-//         self.canvas.set_draw_color(Color::RGBA(0, 0, 0, 192));
-//         self.canvas.set_blend_mode(sdl2::render::BlendMode::Blend);
-//         self.canvas.fill_rect(r1).map_err(|e| anyhow!("{e}"))?;
+                    let saved_state = AutoSavedState {
+                        data: gb_state.gb.save_state(),
+                        thumbnail: frame_buffer_to_image(gb_state.gb.frame_buffer()),
+                    };
 
-//         self.canvas
-//             .copy(&fps_tex, None, r2)
-//             .map_err(|e| anyhow!("{e}"))?;
+                    gb_state.auto_saved_states.push_back(saved_state);
+                    if gb_state.auto_saved_states.len() > config.auto_state_save_limit() {
+                        gb_state.auto_saved_states.pop_front();
+                    }
 
-//         unsafe { fps_tex.destroy() };
+                    app_state.push(AppState::Rewinding).unwrap();
+                }
+            }
+            HotKey::Menu => {
+                app_state.set(AppState::Menu).unwrap();
+            }
+            HotKey::FullScreen => {
+                window_control_event.send(WindowControlEvent::ToggleFullscreen);
+            }
 
-//         Ok(())
-//     }
-// }
+            HotKey::Turbo => {}
+        }
+    }
+}
