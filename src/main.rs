@@ -11,6 +11,7 @@ use log::{error, info, log_enabled};
 use menu::MenuPlugin;
 use rewinding::{AutoSavedState, RewindingPlugin};
 use std::{
+    cmp::max,
     collections::VecDeque,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -18,6 +19,7 @@ use std::{
 
 use bevy::{
     diagnostic::{Diagnostics, DiagnosticsPlugin, FrameTimeDiagnosticsPlugin},
+    input::{mouse::MouseButtonInput, ElementState},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::WindowMode,
@@ -66,6 +68,8 @@ fn main(
     .add_event::<HotKey>()
     .add_event::<WindowControlEvent>()
     .add_system(window_control_event)
+    .insert_resource(LastClicked(0.0))
+    .add_system(process_double_click)
     .add_startup_system(setup);
 
     if let Some(rom_file) = rom_file {
@@ -347,6 +351,28 @@ fn window_control_event(
     }
 }
 
+struct LastClicked(f64);
+
+fn process_double_click(
+    time: Res<Time>,
+    mut last_clicked: ResMut<LastClicked>,
+    mut mouse_button_event: EventReader<MouseButtonInput>,
+    mut window_control_event: EventWriter<WindowControlEvent>,
+) {
+    for ev in mouse_button_event.iter() {
+        if ev.button == MouseButton::Left && ev.state == ElementState::Pressed {
+            let cur = time.seconds_since_startup();
+            let diff = cur - last_clicked.0;
+
+            if diff < 0.25 {
+                window_control_event.send(WindowControlEvent::ToggleFullscreen);
+            }
+
+            last_clicked.0 = cur;
+        }
+    }
+}
+
 fn restore_window(window: &mut Window, fullscreen: bool, scaling: usize) {
     let width = 160;
     let height = 144;
@@ -397,8 +423,6 @@ fn gameboy_system(
             if state.auto_saved_states.len() > config.auto_state_save_limit() {
                 state.auto_saved_states.pop_front();
             }
-
-            info!("Auto state saved");
         }
         push_audio_queue(&mut *queue, state.gb.audio_buffer());
         state.frames += 1;
@@ -472,7 +496,7 @@ fn fps_system(
 }
 
 fn process_hotkey(
-    config: Res<config::Config>,
+    mut config: ResMut<config::Config>,
     mut reader: EventReader<HotKey>,
     mut app_state: ResMut<State<AppState>>,
     mut gb_state: Option<ResMut<GameBoyState>>,
@@ -545,6 +569,18 @@ fn process_hotkey(
             }
             HotKey::FullScreen => {
                 window_control_event.send(WindowControlEvent::ToggleFullscreen);
+            }
+            HotKey::ScaleUp => {
+                info!("123");
+                let cur = config.scaling();
+                config.set_scaling(cur + 1);
+                window_control_event.send(WindowControlEvent::Restore);
+            }
+            HotKey::ScaleDown => {
+                info!("456");
+                let cur = config.scaling();
+                config.set_scaling(max(1, cur - 1));
+                window_control_event.send(WindowControlEvent::Restore);
             }
 
             HotKey::Turbo => {}

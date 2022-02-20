@@ -123,7 +123,7 @@ fn menu_system(
                 if ui.button("🔧Setting").clicked() {
                     *menu_tab = MenuTab::Setting;
                 }
-                if ui.button("↩️Quit").clicked() {
+                if ui.button("↩Quit").clicked() {
                     exit.send(AppExit);
                 }
             });

@@ -154,6 +154,8 @@ pub enum HotKey {
     Rewind,
     Menu,
     FullScreen,
+    ScaleUp,
+    ScaleDown,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -178,6 +180,11 @@ impl Default for HotKeys {
             ),
             (Menu, keycode!(Escape)),
             (FullScreen, all![keycode!(RAlt), keycode!(Return)]),
+            (
+                ScaleUp,
+                all![keycode!(LControl), any![keycode!(Plus), keycode!(Equals)]],
+            ),
+            (ScaleDown, all![keycode!(LControl), keycode!(Minus)]),
         ])
     }
 }
