@@ -1,6 +1,8 @@
 mod config;
 mod file;
+mod hotkey;
 mod input;
+mod key_assign;
 mod menu;
 mod rewinding;
 
@@ -8,14 +10,13 @@ use anyhow::Result;
 use bevy_easings::EasingsPlugin;
 use bevy_tiled_camera::TiledCameraPlugin;
 use log::{error, info, log_enabled};
-use menu::MenuPlugin;
-use rewinding::{AutoSavedState, RewindingPlugin};
 use std::{
-    cmp::max,
     collections::VecDeque,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
+
+use tgbr_core::{AudioBuffer, Config, FrameBuffer, GameBoy, Input as GameBoyInput};
 
 use bevy::{
     diagnostic::{Diagnostics, DiagnosticsPlugin, FrameTimeDiagnosticsPlugin},
@@ -27,13 +28,14 @@ use bevy::{
 use bevy_egui::EguiPlugin;
 use bevy_kira_audio::{AudioPlugin, AudioStream, AudioStreamPlugin, Frame, StreamedAudio};
 
-use tgbr_core::{AudioBuffer, Config, FrameBuffer, GameBoy, Input as GameBoyInput};
-
-use config::{load_config, load_persistent_state, Palette};
-use file::{load_backup_ram, load_rom, print_rom_info, save_backup_ram};
-use input::{check_hotkey, gameboy_input_system, HotKey};
-
-use crate::file::{load_state_data, save_state_data};
+use crate::{
+    config::{load_config, load_persistent_state, Palette},
+    file::{load_backup_ram, load_rom, print_rom_info, save_backup_ram},
+    hotkey::HotKey,
+    input::gameboy_input_system,
+    key_assign::InputState,
+    rewinding::AutoSavedState,
+};
 
 #[argopt::cmd]
 fn main(
@@ -49,6 +51,7 @@ fn main(
     app.insert_resource(WindowDescriptor {
         title: "TGB-R".to_string(),
         resizable: false,
+        vsync: true,
         ..Default::default()
     })
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
@@ -62,10 +65,10 @@ fn main(
     .add_plugin(AudioPlugin)
     .add_plugin(EasingsPlugin)
     .add_plugin(EguiPlugin)
-    .add_plugin(MenuPlugin)
+    .add_plugin(hotkey::HotKeyPlugin)
+    .add_plugin(menu::MenuPlugin)
     .add_plugin(GameBoyPlugin)
-    .add_plugin(RewindingPlugin)
-    .add_event::<HotKey>()
+    .add_plugin(rewinding::RewindingPlugin)
     .add_event::<WindowControlEvent>()
     .add_system(window_control_event)
     .insert_resource(LastClicked(0.0))
@@ -92,9 +95,17 @@ fn main(
     Ok(())
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, audio: Res<StreamedAudio<AudioStreamQueue>>) {
     use bevy_tiled_camera::*;
     commands.spawn_bundle(TiledCameraBundle::new().with_target_resolution(1, [160, 144]));
+
+    let audio_queue = Arc::new(Mutex::new(VecDeque::new()));
+
+    audio.stream(AudioStreamQueue {
+        queue: Arc::clone(&audio_queue),
+    });
+
+    commands.insert_resource(AudioStreamQueue { queue: audio_queue });
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -162,8 +173,6 @@ impl Plugin for GameBoyPlugin {
             .init_resource::<GameBoyInput>()
             .add_system_set(
                 SystemSet::on_update(AppState::Running)
-                    .with_system(check_hotkey)
-                    .with_system(process_hotkey)
                     .with_system(gameboy_input_system.label("input")),
             )
             .add_system_set(
@@ -218,7 +227,6 @@ fn setup_gameboy_system(
     gb_state: Res<GameBoyState>,
     mut images: ResMut<Assets<Image>>,
     mut fonts: ResMut<Assets<Font>>,
-    audio: Res<StreamedAudio<AudioStreamQueue>>,
     mut event: EventWriter<WindowControlEvent>,
 ) {
     let width = gb_state.gb.frame_buffer().width as u32;
@@ -275,14 +283,6 @@ fn setup_gameboy_system(
             ..Default::default()
         })
         .insert(FpsTextBg);
-
-    let audio_queue = Arc::new(Mutex::new(VecDeque::new()));
-
-    audio.stream(AudioStreamQueue {
-        queue: Arc::clone(&audio_queue),
-    });
-
-    commands.insert_resource(AudioStreamQueue { queue: audio_queue });
 
     event.send(WindowControlEvent::Restore);
 }
@@ -390,6 +390,7 @@ fn gameboy_system(
     mut images: ResMut<Assets<Image>>,
     input: Res<GameBoyInput>,
     audio_queue: Res<AudioStreamQueue>,
+    is_turbo: Res<hotkey::IsTurbo>,
 ) {
     state.gb.set_input(&*input);
 
@@ -406,38 +407,52 @@ fn gameboy_system(
         }
     };
 
-    if queue.len() > samples_per_frame * 4 {
-        // execution too fast. wait 1 frame.
-        return;
-    }
+    if !is_turbo.0 {
+        if queue.len() > samples_per_frame * 4 {
+            // execution too fast. wait 1 frame.
+            return;
+        }
 
-    let mut exec_frame = |queue: &mut VecDeque<Frame>| {
-        state.gb.exec_frame();
-        if state.frames % config.auto_state_save_freq() == 0 {
-            let saved_state = AutoSavedState {
-                data: state.gb.save_state(),
-                thumbnail: frame_buffer_to_image(state.gb.frame_buffer()),
-            };
+        let mut exec_frame = |queue: &mut VecDeque<Frame>| {
+            state.gb.exec_frame();
+            if state.frames % config.auto_state_save_freq() == 0 {
+                let saved_state = AutoSavedState {
+                    data: state.gb.save_state(),
+                    thumbnail: frame_buffer_to_image(state.gb.frame_buffer()),
+                };
 
-            state.auto_saved_states.push_back(saved_state);
-            if state.auto_saved_states.len() > config.auto_state_save_limit() {
-                state.auto_saved_states.pop_front();
+                state.auto_saved_states.push_back(saved_state);
+                if state.auto_saved_states.len() > config.auto_state_save_limit() {
+                    state.auto_saved_states.pop_front();
+                }
+            }
+            push_audio_queue(&mut *queue, state.gb.audio_buffer());
+            state.frames += 1;
+        };
+
+        if queue.len() < samples_per_frame * 2 {
+            // execution too slow. run 2 frame for supply enough audio samples.
+            exec_frame(&mut *queue);
+        }
+        exec_frame(&mut *queue);
+
+        // Update texture
+        let fb = state.gb.frame_buffer();
+        let image = images.get_mut(&screen.0).unwrap();
+        copy_frame_buffer(&mut image.data, fb);
+    } else {
+        for _ in 0..5 {
+            state.gb.exec_frame();
+            if queue.len() < samples_per_frame * 2 {
+                push_audio_queue(&mut *queue, state.gb.audio_buffer());
             }
         }
-        push_audio_queue(&mut *queue, state.gb.audio_buffer());
+        // Update texture
+        let fb = state.gb.frame_buffer();
+        let image = images.get_mut(&screen.0).unwrap();
+        copy_frame_buffer(&mut image.data, fb);
         state.frames += 1;
-    };
-
-    if queue.len() < samples_per_frame * 2 {
-        // execution too slow. run 2 frame for supply enough audio samples.
-        exec_frame(&mut *queue);
     }
-    exec_frame(&mut *queue);
-
-    // Update texture
-    let fb = state.gb.frame_buffer();
-    let image = images.get_mut(&screen.0).unwrap();
-    copy_frame_buffer(&mut image.data, fb);
 }
 
 fn frame_buffer_to_image(frame_buffer: &FrameBuffer) -> Image {
@@ -477,6 +492,7 @@ fn copy_frame_buffer(data: &mut [u8], frame_buffer: &FrameBuffer) {
 fn fps_system(
     config: Res<config::Config>,
     diagnostics: ResMut<Diagnostics>,
+    is_turbo: Res<hotkey::IsTurbo>,
     mut q: QuerySet<(
         QueryState<(&mut Text, &mut Visibility), With<FpsText>>,
         QueryState<&mut Visibility, With<FpsTextBg>>,
@@ -486,104 +502,11 @@ fn fps_system(
     let (mut text, mut visibility) = q0.single_mut();
     visibility.is_visible = config.show_fps();
     let fps_diag = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS).unwrap();
-    let fps = fps_diag.value().unwrap_or(0.0);
+    let fps = fps_diag.value().unwrap_or(0.0) * if is_turbo.0 { 5.0 } else { 1.0 };
     let fps = format!("{fps:5.02}");
     text.sections[0].value = fps.chars().take(5).collect();
 
     let mut q1 = q.q1();
     let mut visibility_bg = q1.single_mut();
     visibility_bg.is_visible = config.show_fps();
-}
-
-fn process_hotkey(
-    mut config: ResMut<config::Config>,
-    mut reader: EventReader<HotKey>,
-    mut app_state: ResMut<State<AppState>>,
-    mut gb_state: Option<ResMut<GameBoyState>>,
-    mut ui_state: ResMut<UiState>,
-    mut window_control_event: EventWriter<WindowControlEvent>,
-) {
-    for hotkey in reader.iter() {
-        match hotkey {
-            HotKey::Reset => {
-                if let Some(state) = &mut gb_state {
-                    state.gb.reset();
-                    info!("Reset machine");
-                }
-            }
-            HotKey::StateSave => {
-                if let Some(state) = &mut gb_state {
-                    let data = state.gb.save_state();
-                    save_state_data(
-                        &state.rom_file,
-                        ui_state.state_save_slot,
-                        &data,
-                        config.state_dir(),
-                    )
-                    .unwrap();
-                    info!("State saved to slot {}", ui_state.state_save_slot);
-                }
-            }
-            HotKey::StateLoad => {
-                if let Some(state) = &mut gb_state {
-                    let res = (|| {
-                        let data = load_state_data(
-                            &state.rom_file,
-                            ui_state.state_save_slot,
-                            config.state_dir(),
-                        )?;
-                        state.gb.load_state(&data)
-                    })();
-                    if let Err(e) = res {
-                        error!("Failed to load state: {}", e);
-                    }
-                }
-            }
-            HotKey::NextSlot => {
-                ui_state.state_save_slot += 1;
-                info!("State save slot changed: {}", ui_state.state_save_slot);
-            }
-            HotKey::PrevSlot => {
-                ui_state.state_save_slot = ui_state.state_save_slot.saturating_sub(1);
-                info!("State save slot changed: {}", ui_state.state_save_slot);
-            }
-            HotKey::Rewind => {
-                if app_state.current() == &AppState::Running {
-                    let gb_state = gb_state.as_mut().unwrap();
-
-                    let saved_state = AutoSavedState {
-                        data: gb_state.gb.save_state(),
-                        thumbnail: frame_buffer_to_image(gb_state.gb.frame_buffer()),
-                    };
-
-                    gb_state.auto_saved_states.push_back(saved_state);
-                    if gb_state.auto_saved_states.len() > config.auto_state_save_limit() {
-                        gb_state.auto_saved_states.pop_front();
-                    }
-
-                    app_state.push(AppState::Rewinding).unwrap();
-                }
-            }
-            HotKey::Menu => {
-                app_state.set(AppState::Menu).unwrap();
-            }
-            HotKey::FullScreen => {
-                window_control_event.send(WindowControlEvent::ToggleFullscreen);
-            }
-            HotKey::ScaleUp => {
-                info!("123");
-                let cur = config.scaling();
-                config.set_scaling(cur + 1);
-                window_control_event.send(WindowControlEvent::Restore);
-            }
-            HotKey::ScaleDown => {
-                info!("456");
-                let cur = config.scaling();
-                config.set_scaling(max(1, cur - 1));
-                window_control_event.send(WindowControlEvent::Restore);
-            }
-
-            HotKey::Turbo => {}
-        }
-    }
 }

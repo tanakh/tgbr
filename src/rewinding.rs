@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_easings::*;
 use std::time::Duration;
 
-use crate::{config, input::InputState, AppState, GameBoyState, ScreenSprite};
+use crate::{config, key_assign::InputState, AppState, GameBoyState, ScreenSprite};
 
 pub struct AutoSavedState {
     pub thumbnail: Image,

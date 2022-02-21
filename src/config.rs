@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::input::{HotKeys, KeyConfig};
+use crate::{hotkey::HotKeys, input::KeyConfig};
 
 const FRAME_SKIP_ON_TURBO: usize = 5;
 const AUDIO_FREQUENCY: usize = 48000;
