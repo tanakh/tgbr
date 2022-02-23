@@ -6,6 +6,7 @@ use crate::{
 };
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{egui, EguiContext};
+use tgbr_core::Model;
 
 pub struct MenuPlugin;
 
@@ -74,12 +75,7 @@ fn menu_event_system(
         match event {
             MenuEvent::OpenRomFile(path) => {
                 info!("Opening file: {:?}", path);
-                match GameBoyState::new(
-                    &path,
-                    config.boot_rom(),
-                    config.save_dir(),
-                    config.palette(),
-                ) {
+                match GameBoyState::new(&path, &config) {
                     Ok(gb) => {
                         commands.insert_resource(gb);
                         persistent_state.add_recent(&path);
@@ -167,6 +163,17 @@ fn menu_system(
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                         ui.heading("General Settings");
                         ui.group(|ui| {
+                            ui.label("Model");
+                            ui.horizontal(|ui| {
+                                let mut val = config.model();
+                                ui.radio_value(&mut val, Model::Auto, "Auto");
+                                ui.radio_value(&mut val, Model::Dmg, "GameBoy");
+                                ui.radio_value(&mut val, Model::Cgb, "GameBoy Color");
+                                if config.model() != val {
+                                    config.set_model(val);
+                                }
+                            });
+
                             ui.horizontal(|ui| {
                                 ui.label("Save file directory");
                                 if ui.button("Change").clicked() {
@@ -195,10 +202,10 @@ fn menu_system(
                             let s = config.save_dir().display().to_string();
                             ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
 
-                            ui.label("Boot ROM (TODO)");
-                            ui.radio(false, "Do not use boot ROM");
-                            ui.radio(false, "Use internal boot ROM");
-                            ui.radio(false, "Use specified boot ROM file");
+                            // ui.label("Boot ROM (TODO)");
+                            // ui.radio(false, "Do not use boot ROM");
+                            // ui.radio(false, "Use internal boot ROM");
+                            // ui.radio(false, "Use specified boot ROM file");
                         });
 
                         ui.heading("Graphics");

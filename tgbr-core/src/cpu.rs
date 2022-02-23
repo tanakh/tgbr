@@ -209,6 +209,11 @@ impl Cpu {
     pub fn step(&mut self, ctx: &mut impl Context) {
         self.period += 1;
         while self.cycle < self.period {
+            if ctx.check_stall_cpu() {
+                self.tick(ctx);
+                continue;
+            }
+
             if self.halting {
                 // FIXME: halt bug?
                 if ctx.interrupt_flag() & ctx.interrupt_enable() != 0 {
@@ -219,11 +224,13 @@ impl Cpu {
                 self.prev_interrupt_enable = self.interrupt_master_enable;
                 continue;
             }
+
             let pc = self.reg.pc;
             let opc = self.fetch(ctx);
             if self.process_interrupt(ctx, pc) {
                 continue;
             }
+
             if log_enabled!(Level::Trace) {
                 self.trace(ctx, pc, opc);
             }
@@ -652,6 +659,7 @@ impl Cpu {
             }};
             (STOP) => {{
                 self.halting = true;
+                ctx.stop();
                 debug!("STOP");
             }};
             (DI) => {{

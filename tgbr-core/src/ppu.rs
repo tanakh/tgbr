@@ -11,12 +11,7 @@ use crate::{
     util::{pack, trait_alias},
 };
 
-trait_alias!(pub trait Context = context::InterruptFlag);
-
-const MODE_HBLANK: u8 = 0;
-const MODE_VBLANK: u8 = 1;
-const MODE_OAM_SEARCH: u8 = 2;
-const MODE_TRANSFER: u8 = 3;
+trait_alias!(pub trait Context = context::Vram + context::Oam + context::InterruptFlag + context::Model);
 
 const ATTR_NONE: u8 = 0;
 const ATTR_BG: u8 = 1;
@@ -37,7 +32,7 @@ pub struct Ppu {
     oam_interrupt_enable: bool,
     vblank_interrupt_enable: bool,
     hblank_interrupt_enable: bool,
-    mode: u8,
+    mode: Mode,
     prev_lcd_interrupt: bool,
 
     scroll_y: u8,
@@ -54,10 +49,6 @@ pub struct Ppu {
     frame: u64,
     window_rendering_counter: u8,
 
-    #[serde(with = "serde_bytes")]
-    vram: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    oam: Vec<u8>,
     dmg_palette: [Color; 4],
 
     #[serde(with = "serde_bytes")]
@@ -69,11 +60,24 @@ pub struct Ppu {
     frame_buffer: FrameBuffer,
 }
 
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Mode {
+    Hblank = 0,
+    Vblank = 1,
+    OamSearch = 2,
+    Transfer = 3,
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Mode::Hblank
+    }
+}
+
 impl Ppu {
     pub fn new(dmg_palette: &[Color; 4]) -> Self {
         Self {
-            vram: vec![0; 0x2000],
-            oam: vec![0; 0xA0],
             line_buffer: vec![0; SCREEN_WIDTH as usize],
             line_buffer_attr: vec![0; SCREEN_WIDTH as usize],
             dmg_palette: dmg_palette.clone(),
@@ -107,53 +111,59 @@ impl Ppu {
         }
 
         if !self.ppu_enable {
-            self.mode = MODE_HBLANK;
+            self.mode = Mode::Hblank;
             self.prev_lcd_interrupt = false;
             return;
         }
 
         if VISIBLE_RANGE.contains(&(self.ly as u64)) {
             if self.lx < 80 {
-                self.set_mode(ctx, MODE_OAM_SEARCH);
+                self.set_mode(ctx, Mode::OamSearch);
             } else {
                 // FIXME: Calculate accurate timing
                 let transfer_period = 172 + self.scroll_x as u64 % 8;
 
                 if self.lx < 80 + transfer_period {
-                    self.set_mode(ctx, MODE_TRANSFER);
+                    self.set_mode(ctx, Mode::Transfer);
                 } else {
-                    self.set_mode(ctx, MODE_HBLANK);
+                    self.set_mode(ctx, Mode::Hblank);
                 }
             }
         } else {
-            self.set_mode(ctx, MODE_VBLANK);
+            self.set_mode(ctx, Mode::Vblank);
         }
 
         self.update_lcd_interrupt(ctx);
     }
 
-    fn set_mode(&mut self, ctx: &mut impl Context, mode: u8) {
+    fn set_mode(&mut self, ctx: &mut impl Context, mode: Mode) {
         if self.mode != mode {
-            if mode == MODE_VBLANK {
+            if mode == Mode::Vblank {
                 ctx.set_interrupt_flag_bit(INT_VBLANK);
             }
-            if mode == MODE_TRANSFER {
-                self.render_line();
+            if mode == Mode::Transfer {
+                self.render_line(ctx);
             }
+            // ctx.set_vram_lock(self.vram_locked());
+            ctx.set_oam_lock(self.oam_locked());
         }
         self.mode = mode;
     }
 
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
     fn update_lcd_interrupt(&mut self, ctx: &mut impl Context) {
         let cur_lcd_interrupt = match self.mode {
-            MODE_HBLANK => self.hblank_interrupt_enable,
-            MODE_VBLANK => {
+            Mode::Hblank => self.hblank_interrupt_enable,
+            Mode::Vblank => {
                 self.vblank_interrupt_enable
                     || (self.ly as u64 == VISIBLE_RANGE.end
                         && self.lx < 80
                         && self.oam_interrupt_enable)
             }
-            MODE_OAM_SEARCH => self.oam_interrupt_enable,
+            Mode::OamSearch => self.oam_interrupt_enable,
             _ => false,
         } || (self.lyc_interrupt_enable && self.ly == self.lyc);
 
@@ -167,7 +177,7 @@ impl Ppu {
         self.frame
     }
 
-    pub fn read(&mut self, addr: u16) -> u8 {
+    pub fn read(&mut self, ctx: &impl Context, addr: u16) -> u8 {
         let data = match addr & 0xff {
             // LCDC: LCD Control (R/W)
             0x40 => pack! {
@@ -188,7 +198,7 @@ impl Ppu {
                 4     => self.vblank_interrupt_enable,
                 3     => self.hblank_interrupt_enable,
                 2     => self.lyc == self.ly,
-                0..=1 => self.mode,
+                0..=1 => self.mode as u8,
             },
             // SCY: Scroll Y (R/W)
             0x42 => self.scroll_y,
@@ -225,13 +235,13 @@ impl Ppu {
         data
     }
 
-    pub fn write(&mut self, addr: u16, data: u8) {
+    pub fn write(&mut self, ctx: &impl Context, addr: u16, data: u8) {
         trace!("PPU Write: ${addr:04X} = ${data:02X}");
         match addr & 0xff {
             // LCDC: LCD Control (R/W)
             0x40 => {
                 let v = data.view_bits::<Lsb0>();
-                if self.ppu_enable && !v[7] && self.mode != MODE_VBLANK {
+                if self.ppu_enable && !v[7] && self.mode != Mode::Vblank {
                     error!("Disabling the display outside of the VBlank period");
                 }
                 self.ppu_enable = v[7];
@@ -253,7 +263,7 @@ impl Ppu {
             }
             // SCY: Scroll Y (R/W)
             0x42 => {
-                if self.mode == MODE_TRANSFER {
+                if self.mode == Mode::Transfer {
                     debug!(
                         "SCY changed in mode3: SCY={data:3} FRM:{} Y:{:3} X:{:3}",
                         self.frame, self.ly, self.lx
@@ -263,7 +273,7 @@ impl Ppu {
             }
             // SCX: Scroll X (R/W)
             0x43 => {
-                if self.mode == MODE_TRANSFER {
+                if self.mode == Mode::Transfer {
                     debug!(
                         "SCX changed in mode3: SCX={data:3} FRM:{} Y:{:3} X:{:3}",
                         self.frame, self.ly, self.lx
@@ -302,57 +312,38 @@ impl Ppu {
                     warn!("WX value 0 or 166 is unreliable");
                 }
             }
+
+            // OPRI - CGB Mode Only - Object Priority Mode
+            0x6c => {
+                if ctx.model().is_cgb() {
+                    // ???
+                } else {
+                    warn!("OPRI write in DMG mode");
+                }
+            }
             _ => warn!("Unusable write to I/O: ${addr:04X} = ${data:02X}"),
         }
     }
 
-    pub fn read_vram(&self, addr: u16) -> u8 {
-        if !self.vram_locked() {
-            self.vram[addr as usize]
-        } else {
-            !0
-        }
-    }
-
-    pub fn write_vram(&mut self, addr: u16, data: u8) {
-        if !self.vram_locked() {
-            self.vram[addr as usize] = data
-        }
-    }
-
-    fn vram_locked(&self) -> bool {
-        // self.mode == MODE_TRANSFER
-        false
-    }
-
-    pub fn read_oam(&self, addr: u8) -> u8 {
-        if !self.oam_locked() {
-            self.oam[addr as usize]
-        } else {
-            !0
-        }
-    }
-
-    pub fn write_oam(&mut self, addr: u8, data: u8, force: bool) {
-        if force || !self.oam_locked() {
-            self.oam[addr as usize] = data
-        }
-    }
+    // fn vram_locked(&self) -> bool {
+    //     // self.mode == MODE_TRANSFER
+    //     false
+    // }
 
     fn oam_locked(&self) -> bool {
-        self.mode == MODE_OAM_SEARCH || self.mode == MODE_TRANSFER
+        self.mode == Mode::OamSearch || self.mode == Mode::Transfer
     }
 }
 
 impl Ppu {
-    fn render_line(&mut self) {
+    fn render_line(&mut self, ctx: &impl Context) {
         self.line_buffer.fill(0);
         self.line_buffer_attr.fill(ATTR_NONE);
         if self.ppu_enable && self.bg_and_window_enable {
-            self.render_bg_line();
+            self.render_bg_line(ctx);
         }
         if self.ppu_enable && self.obj_enable {
-            self.render_obj_line();
+            self.render_obj_line(ctx);
         }
         let y = self.ly as usize;
         for x in 0..SCREEN_WIDTH as usize {
@@ -362,7 +353,7 @@ impl Ppu {
         }
     }
 
-    fn render_bg_line(&mut self) {
+    fn render_bg_line(&mut self, ctx: &impl Context) {
         let tile_data: u16 = if self.bg_and_window_tile_data_select {
             0x0000
         } else {
@@ -382,6 +373,8 @@ impl Ppu {
         let y = self.ly.wrapping_add(self.scroll_y);
         let is_in_window_y_range = self.ly >= self.window_y;
         let mut window_rendered = false;
+
+        let vram = ctx.vram();
 
         for scr_x in 0..SCREEN_WIDTH as u8 {
             let is_in_window_x_range = scr_x + 7 >= self.window_x;
@@ -403,15 +396,15 @@ impl Ppu {
             let ofs_x = x as u16 % 8;
             let ofs_y = y as u16 % 8;
 
-            let tile_ix = self.vram[(tile_map + tile_y * 32 + tile_x) as usize];
+            let tile_ix = vram[(tile_map + tile_y * 32 + tile_x) as usize];
 
             let mut tile_addr = tile_data + (tile_ix as u16 * 16);
             if tile_addr >= 0x1800 {
                 tile_addr -= 0x1000;
             }
 
-            let lo = self.vram[(tile_addr + ofs_y * 2) as usize];
-            let hi = self.vram[(tile_addr + ofs_y * 2 + 1) as usize];
+            let lo = vram[(tile_addr + ofs_y * 2) as usize];
+            let hi = vram[(tile_addr + ofs_y * 2 + 1) as usize];
 
             let b = (lo >> (7 - ofs_x)) & 1 | ((hi >> (7 - ofs_x)) & 1) << 1;
 
@@ -424,7 +417,7 @@ impl Ppu {
         }
     }
 
-    fn render_obj_line(&mut self) {
+    fn render_obj_line(&mut self, ctx: &impl Context) {
         let w = self.line_buffer.len();
 
         let obj_size = if self.obj_size { 16 } else { 8 };
@@ -432,8 +425,11 @@ impl Ppu {
         let mut obj_count = 0;
         let mut render_objs = [(0xff, 0xff); 10];
 
+        let oam = ctx.oam();
+        let vram = ctx.vram();
+
         for i in 0..40 {
-            let r = &self.oam[i * 4..(i + 1) * 4];
+            let r = &oam[i * 4..(i + 1) * 4];
             let y = r[0];
             let x = r[1];
             if (y..y + obj_size).contains(&(self.ly + 16)) {
@@ -452,7 +448,7 @@ impl Ppu {
 
         for i in 0..obj_count {
             let i = render_objs[i].1;
-            let r = &self.oam[i * 4..(i + 1) * 4];
+            let r = &oam[i * 4..(i + 1) * 4];
             let y = r[0];
             let x = r[1];
             let tile_index = r[2];
@@ -479,8 +475,8 @@ impl Ppu {
                     + (ofs_y & 7) as u16 * 2
             };
 
-            let lo = self.vram[tile_addr as usize];
-            let hi = self.vram[(tile_addr + 1) as usize];
+            let lo = vram[tile_addr as usize];
+            let hi = vram[(tile_addr + 1) as usize];
 
             for ofs_x in 0..8 {
                 let scr_x = x as usize + ofs_x;

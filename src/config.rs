@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use tgbr_core::{BootRoms, Model};
+
 use crate::{hotkey::HotKeys, input::KeyConfig};
 
 const FRAME_SKIP_ON_TURBO: usize = 5;
@@ -49,26 +51,33 @@ const PALETTE_PRESET: Palette = {
 
 #[rustfmt::skip]
 const BOOT_ROMS: &[(&str, &[u8])] = &[
-    ("SameBoy-DMG", include_bytes!("../assets/sameboy-bootroms/dmg_boot.bin")),
-    ("SameBoy-CGB", include_bytes!("../assets/sameboy-bootroms/cgb_boot.bin")),
-    ("SameBoy-SGB", include_bytes!("../assets/sameboy-bootroms/sgb_boot.bin")),
-    ("SameBoy-SGB2",include_bytes!("../assets/sameboy-bootroms/sgb2_boot.bin")),
-    ("SameBoy-CGB", include_bytes!("../assets/sameboy-bootroms/cgb_boot.bin")),
-    ("SameBoy-AGB", include_bytes!("../assets/sameboy-bootroms/agb_boot.bin")),
+    ("DMG", include_bytes!("../assets/sameboy-bootroms/dmg_boot.bin")),
+    ("CGB", include_bytes!("../assets/sameboy-bootroms/cgb_boot.bin")),
+    ("SGB", include_bytes!("../assets/sameboy-bootroms/sgb_boot.bin")),
+    ("SGB2",include_bytes!("../assets/sameboy-bootroms/sgb2_boot.bin")),
+    ("AGB", include_bytes!("../assets/sameboy-bootroms/agb_boot.bin")),
 ];
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     save_dir: PathBuf,
     state_dir: PathBuf,
+    model: Model,
     show_fps: bool,
     scaling: usize,
     auto_state_save_freq: usize,
     auto_state_save_limit: usize,
-    boot_rom: Option<String>,
+    boot_rom: BootRom,
     palette: [tgbr_core::Color; 4],
     key_config: KeyConfig,
     hotkeys: HotKeys,
+}
+
+#[derive(Serialize, Deserialize)]
+enum BootRom {
+    None,
+    Internal,
+    Custom,
 }
 
 impl Default for Config {
@@ -91,11 +100,12 @@ impl Default for Config {
         Self {
             save_dir,
             state_dir,
+            model: Model::Auto,
             show_fps: false,
             scaling: 4,
             auto_state_save_freq: 60,
             auto_state_save_limit: 10 * 60,
-            boot_rom: Some("SameBoy-DMG".to_owned()),
+            boot_rom: BootRom::Internal,
             palette: PALETTE_PRESET,
             key_config: KeyConfig::default(),
             hotkeys: HotKeys::default(),
@@ -163,15 +173,26 @@ impl Config {
         self.save().unwrap();
     }
 
-    pub fn boot_rom(&self) -> Option<Vec<u8>> {
-        self.boot_rom.as_ref().map(|r| {
-            BOOT_ROMS
-                .iter()
-                .find(|(name, _)| name == &r)
-                .unwrap()
-                .1
-                .to_vec()
-        })
+    pub fn boot_roms(&self) -> BootRoms {
+        match self.boot_rom {
+            BootRom::None => BootRoms::default(),
+            BootRom::Internal => {
+                let lookup = |name: &str| {
+                    BOOT_ROMS
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .map(|(_, b)| b.to_vec())
+                };
+                BootRoms {
+                    dmg: lookup("DMG"),
+                    cgb: lookup("CGB"),
+                    sgb: lookup("SGB"),
+                    sgb2: lookup("SGB2"),
+                    agb: lookup("AGB"),
+                }
+            }
+            BootRom::Custom => todo!(),
+        }
     }
 
     pub fn key_config(&self) -> &KeyConfig {
@@ -188,6 +209,15 @@ impl Config {
 
     pub fn auto_state_save_limit(&self) -> usize {
         self.auto_state_save_limit
+    }
+
+    pub fn model(&self) -> Model {
+        self.model
+    }
+
+    pub fn set_model(&mut self, model: Model) {
+        self.model = model;
+        self.save().unwrap();
     }
 }
 

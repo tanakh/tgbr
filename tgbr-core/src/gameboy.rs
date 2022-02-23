@@ -11,7 +11,6 @@ use crate::{
 #[derive(Serialize, Deserialize)]
 pub struct GameBoy {
     rom_hash: [u8; 32],
-    model: Model,
     #[serde(flatten)]
     ctx: context::Context,
 }
@@ -47,13 +46,16 @@ impl GameBoy {
             }
         };
 
+        log::info!("Model: {model:?}, {:?}", config.model);
+
+        let boot_rom = config.boot_roms.get(model).map(|r| r.to_owned());
+
         let mut ret = Self {
             rom_hash,
-            model,
-            ctx: Context::new(rom, &config.boot_rom, backup_ram, &config.dmg_palette),
+            ctx: Context::new(model, rom, &boot_rom, backup_ram, &config.dmg_palette),
         };
 
-        if !config.boot_rom.is_some() {
+        if !boot_rom.is_some() {
             // Do not use boot ROM
             // Set the values of the state after the boot ROM
             ret.setup_initial_state();
@@ -63,7 +65,7 @@ impl GameBoy {
     }
 
     fn setup_initial_state(&mut self) {
-        match self.model {
+        match context::Model::model(&self.ctx) {
             Model::Dmg => {
                 let reg = self.ctx.cpu.register();
                 reg.a = 0x01;
@@ -97,14 +99,15 @@ impl GameBoy {
     pub fn reset(&mut self) {
         use context::*;
 
+        let model = self.ctx.model();
         let backup_ram = self.backup_ram();
         let mut rom = crate::rom::Rom::default();
         std::mem::swap(&mut rom, self.ctx.rom_mut());
 
         let boot_rom = self.ctx.inner.bus.boot_rom().clone();
-        let dmg_palette = self.ctx.ppu().dmg_palette();
+        let dmg_palette = self.ctx.inner.inner.ppu.dmg_palette();
 
-        self.ctx = Context::new(rom, &boot_rom, backup_ram, dmg_palette);
+        self.ctx = Context::new(model, rom, &boot_rom, backup_ram, dmg_palette);
 
         if !boot_rom.is_some() {
             self.setup_initial_state();
@@ -116,15 +119,14 @@ impl GameBoy {
 
         self.ctx.apu_mut().audio_buffer_mut().buf.clear();
 
-        let start_frame = self.ctx.ppu().frame();
-        while start_frame == self.ctx.ppu().frame() {
+        let start_frame = self.ctx.inner.inner.ppu.frame();
+        while start_frame == self.ctx.inner.inner.ppu.frame() {
             self.ctx.cpu.step(&mut self.ctx.inner);
         }
     }
 
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
-        use context::*;
-        self.ctx.ppu_mut().set_dmg_palette(palette);
+        self.ctx.inner.inner.ppu.set_dmg_palette(palette);
     }
 
     pub fn set_input(&mut self, input: &Input) {
@@ -133,13 +135,11 @@ impl GameBoy {
     }
 
     pub fn frame_buffer(&self) -> &FrameBuffer {
-        use context::*;
-        self.ctx.ppu().frame_buffer()
+        self.ctx.inner.inner.ppu.frame_buffer()
     }
 
     pub fn audio_buffer(&self) -> &AudioBuffer {
-        use context::*;
-        self.ctx.apu().audio_buffer()
+        self.ctx.inner.inner.apu.audio_buffer()
     }
 
     pub fn backup_ram(&mut self) -> Option<Vec<u8>> {

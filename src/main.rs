@@ -16,10 +16,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use tgbr_core::{AudioBuffer, Config, FrameBuffer, GameBoy, Input as GameBoyInput};
+use tgbr_core::{AudioBuffer, Config, FrameBuffer, GameBoy, Input as GameBoyInput, Model};
 
 use bevy::{
-    diagnostic::{Diagnostics, DiagnosticsPlugin, FrameTimeDiagnosticsPlugin},
+    diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin},
     input::{mouse::MouseButtonInput, ElementState},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
@@ -31,9 +31,7 @@ use bevy_kira_audio::{AudioPlugin, AudioStream, AudioStreamPlugin, Frame, Stream
 use crate::{
     config::{load_config, load_persistent_state, Palette},
     file::{load_backup_ram, load_rom, print_rom_info, save_backup_ram},
-    hotkey::HotKey,
     input::gameboy_input_system,
-    key_assign::InputState,
     rewinding::AutoSavedState,
 };
 
@@ -59,10 +57,10 @@ fn main(
     .init_resource::<FullscreenState>()
     .insert_resource(Msaa { samples: 4 })
     .add_plugins(DefaultPlugins)
-    .add_plugin(DiagnosticsPlugin)
     .add_plugin(FrameTimeDiagnosticsPlugin)
     .add_plugin(TiledCameraPlugin)
     .add_plugin(AudioPlugin)
+    .add_plugin(AudioStreamPlugin::<AudioStreamQueue>::default())
     .add_plugin(EasingsPlugin)
     .add_plugin(EguiPlugin)
     .add_plugin(hotkey::HotKeyPlugin)
@@ -76,12 +74,7 @@ fn main(
     .add_startup_system(setup);
 
     if let Some(rom_file) = rom_file {
-        let gb = GameBoyState::new(
-            rom_file,
-            config.boot_rom(),
-            config.save_dir(),
-            config.palette(),
-        )?;
+        let gb = GameBoyState::new(rom_file, &config)?;
         app.insert_resource(gb);
         app.add_state(AppState::Running);
     } else {
@@ -124,29 +117,26 @@ pub struct GameBoyState {
 }
 
 impl GameBoyState {
-    fn new(
-        rom_file: impl AsRef<Path>,
-        boot_rom: Option<Vec<u8>>,
-        save_dir: impl AsRef<Path>,
-        palette: &Palette,
-    ) -> Result<Self> {
+    fn new(rom_file: impl AsRef<Path>, config: &crate::config::Config) -> Result<Self> {
         let rom = load_rom(rom_file.as_ref())?;
         if log_enabled!(log::Level::Info) {
             print_rom_info(&rom.info());
         }
 
-        let backup_ram = load_backup_ram(rom_file.as_ref(), save_dir.as_ref())?;
+        let save_dir = config.save_dir().to_owned();
+        let backup_ram = load_backup_ram(rom_file.as_ref(), &save_dir)?;
 
         let config = Config::default()
-            .set_dmg_palette(palette)
-            .set_boot_rom(boot_rom);
+            .set_model(config.model())
+            .set_dmg_palette(config.palette())
+            .set_boot_rom(config.boot_roms());
 
         let gb = GameBoy::new(rom, backup_ram, &config)?;
 
         Ok(Self {
             gb,
             rom_file: rom_file.as_ref().to_owned(),
-            save_dir: save_dir.as_ref().to_owned(),
+            save_dir: save_dir,
             frames: 0,
             auto_saved_states: VecDeque::new(),
         })
@@ -169,8 +159,7 @@ struct GameBoyPlugin;
 
 impl Plugin for GameBoyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(AudioStreamPlugin::<AudioStreamQueue>::default())
-            .init_resource::<GameBoyInput>()
+        app.init_resource::<GameBoyInput>()
             .add_system_set(
                 SystemSet::on_update(AppState::Running)
                     .with_system(gameboy_input_system.label("input")),

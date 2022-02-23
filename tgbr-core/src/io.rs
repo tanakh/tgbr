@@ -10,7 +10,7 @@ use crate::{
     util::{pack, trait_alias},
 };
 
-trait_alias!(pub trait Context = context::InterruptFlag + context::Ppu + context::Apu);
+trait_alias!(pub trait Context = context::InterruptFlag + context::Ppu + context::Apu + context::Model);
 
 #[derive(Serialize, Deserialize)]
 pub struct Io {
@@ -160,7 +160,7 @@ impl Io {
             // APU Registers
             0x10..=0x3F => ctx.apu_mut().read(addr),
             // PPU Registers
-            0x40..=0x4B => ctx.ppu_mut().read(addr),
+            0x40..=0x4F | 0x6C => ctx.read_ppu(addr),
 
             _ => {
                 warn!("Unknown I/O Read: {:04X}", addr);
@@ -224,7 +224,7 @@ impl Io {
             // APU Registers
             0x10..=0x3F => ctx.apu_mut().write(addr, data),
             // PPU Registers
-            0x40..=0x4B => ctx.ppu_mut().write(addr, data),
+            0x40..=0x4F | 0x6C => ctx.write_ppu(addr, data),
 
             _ => {
                 warn!("Write to ${:04X} = ${:02X}", addr, data);

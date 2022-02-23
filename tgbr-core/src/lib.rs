@@ -16,7 +16,7 @@ pub mod serial;
 pub mod util;
 
 pub use crate::{
-    config::{Config, Model},
+    config::{BootRoms, Config, Model},
     gameboy::GameBoy,
     interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable, Pad},
     rom::Rom,
