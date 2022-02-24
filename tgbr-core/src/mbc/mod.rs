@@ -1,5 +1,6 @@
 mod mbc1;
 mod mbc2;
+mod mbc3;
 mod mbc5;
 
 use ambassador::{delegatable_trait, Delegate};
@@ -82,5 +83,6 @@ macro_rules! def_mbc {
 def_mbc! {
     Mbc1 => mbc1::Mbc1,
     Mbc2 => mbc2::Mbc2,
+    Mbc3 => mbc3::Mbc3,
     Mbc5 => mbc5::Mbc5,
 }

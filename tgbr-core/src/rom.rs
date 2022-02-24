@@ -147,7 +147,7 @@ impl CartridgeType {
                 .with_battery(),
             0xFE => ret.with_mbc(HuC3),
             0xFF => ret.with_mbc(HuC1).with_ram().with_battery(),
-            _ => bail!("Unknown cartridge type: 0x{code:02x}"),
+            _ => bail!("Unknown cartridge type: ${code:02X}"),
         })
     }
 

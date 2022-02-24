@@ -236,9 +236,9 @@ impl Ppu {
                 }
             }
             // WY: Window Y Position (R/W)
-            0x4a => self.window_y,
+            0x4A => self.window_y,
             // WX: Window X Position (R/W)
-            0x4b => self.window_x,
+            0x4B => self.window_x,
 
             // BCPS/BGPI: (Background Color Palette Specification or Background Palette Index) - CGB Mode Only
             0x68 => {
@@ -261,7 +261,7 @@ impl Ppu {
                 }
             }
             // OCPS/OBPI: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
-            0x6a => {
+            0x6A => {
                 if ctx.model().is_cgb() {
                     pack! {
                         7 => self.obj_col_pal_incr,
@@ -273,9 +273,9 @@ impl Ppu {
                 }
             }
             // OCPD/OBPD: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
-            0x6b => !0,
+            0x6B => !0,
             // OPRI - Object Priority Mode - CGB Mode Only
-            0x6c => !0,
+            0x6C => !0,
 
             _ => todo!("Read from LCD I/O: ${addr:04X}"),
         };
@@ -349,9 +349,9 @@ impl Ppu {
                 self.obj_pal[ix][0] = v[0..=1].load();
             }
             // WY: Window Y Position (R/W)
-            0x4a => self.window_y = data,
+            0x4A => self.window_y = data,
             // WX: Window X Position (R/W)
-            0x4b => {
+            0x4B => {
                 self.window_x = data;
                 // WX values 0 and 166 are unreliable due to hardware bugs.
                 // If WX is set to 0, the window will “stutter” horizontally when SCX changes (depending on SCX % 8).
@@ -384,7 +384,7 @@ impl Ppu {
                 }
             }
             // OCPS/OBPI: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
-            0x6a => {
+            0x6A => {
                 if ctx.model().is_cgb() {
                     let v = data.view_bits::<Lsb0>();
                     self.obj_col_pal_incr = v[7];
@@ -394,7 +394,7 @@ impl Ppu {
                 }
             }
             // OCPD/OBPD: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
-            0x6b => {
+            0x6B => {
                 if ctx.model().is_cgb() {
                     self.obj_col_pal[self.obj_col_pal_addr as usize] = data;
                     if self.obj_col_pal_incr {
@@ -406,7 +406,7 @@ impl Ppu {
             }
 
             // OPRI - CGB Mode Only - Object Priority Mode
-            0x6c => {
+            0x6C => {
                 if ctx.model().is_cgb() {
                     // ???
                     debug!("ORPI = ${data:02X}");
@@ -481,12 +481,12 @@ impl Ppu {
             0x1000
         };
         let bg_tile_map: u16 = if self.bg_tile_map_select {
-            0x1c00
+            0x1C00
         } else {
             0x1800
         };
         let window_tile_map: u16 = if self.window_tile_map_select {
-            0x1c00
+            0x1C00
         } else {
             0x1800
         };
@@ -603,9 +603,9 @@ impl Ppu {
         }
 
         // FIXME:
-        // if !cgb_mode {
-        render_objs[0..obj_count].sort();
-        // }
+        if !is_cgb_mode {
+            render_objs[0..obj_count].sort();
+        }
 
         for i in 0..obj_count {
             let i = render_objs[i].1;

@@ -14,11 +14,15 @@ pub struct Mbc5 {
 impl Mbc5 {
     pub fn new(rom: &crate::rom::Rom, internal_ram: Option<Vec<u8>>) -> Self {
         assert!(internal_ram.is_none());
+        let rom_bank_num = rom.rom_size / 0x4000;
+        assert!(rom_bank_num.is_power_of_two());
+        let ram_bank_num = rom.rom_size / 0x2000;
+        assert!(ram_bank_num.is_power_of_two());
         Self {
             rom_bank: 1,
-            rom_bank_mask: (rom.rom_size / 0x4000).saturating_sub(1) as u16,
+            rom_bank_mask: rom_bank_num.saturating_sub(1) as u16,
             ram_bank: 0,
-            ram_bank_mask: (rom.ram_size / 0x2000).saturating_sub(1) as u8,
+            ram_bank_mask: ram_bank_num.saturating_sub(1) as u8,
             ram_enable: false,
         }
     }

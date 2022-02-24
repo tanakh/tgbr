@@ -110,15 +110,15 @@ impl Bus {
 
     pub fn read_immutable(&mut self, ctx: &mut impl Context, addr: u16) -> Option<u8> {
         match addr {
-            0xff00..=0xff7f | 0xffff => None,
+            0xFF00..=0xFF7F | 0xFFFF => None,
             _ => Some(self.read_(ctx, addr)),
         }
     }
 
     fn read_(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
         match addr {
-            0x0100..=0x01ff => self.mbc.read(ctx, addr),
-            0x0000..=0x08ff => {
+            0x0100..=0x01FF => self.mbc.read(ctx, addr),
+            0x0000..=0x08FF => {
                 let is_boot_rom = self.map_boot_rom
                     && self
                         .boot_rom
@@ -134,36 +134,36 @@ impl Bus {
                     self.mbc.read(ctx, addr)
                 }
             }
-            0x0100..=0x7fff => self.mbc.read(ctx, addr),
-            0x8000..=0x9fff => {
-                ctx.vram()[((addr & 0x1fff) | (self.vram_bank as u16 * 0x2000)) as usize]
+            0x0100..=0x7FFF => self.mbc.read(ctx, addr),
+            0x8000..=0x9FFF => {
+                ctx.vram()[((addr & 0x1FFF) | (self.vram_bank as u16 * 0x2000)) as usize]
             }
-            0xa000..=0xbfff => self.mbc.read(ctx, addr),
-            0xc000..=0xfdff => {
-                let addr = addr % 0x1fff;
+            0xA000..=0xBFFF => self.mbc.read(ctx, addr),
+            0xC000..=0xFDFF => {
+                let addr = addr % 0x1FFF;
                 let bank = addr & 0x1000;
                 self.ram[((addr & 0x0fff) + bank * self.ram_bank as u16) as usize]
             }
-            0xfe00..=0xfe9f => {
+            0xFE00..=0xFE9F => {
                 if !self.dma.enabled {
                     ctx.oam()[(addr & 0xff) as usize]
                 } else {
                     !0
                 }
             }
-            0xfea0..=0xfeff => {
+            0xFEA0..=0xFEFF => {
                 warn!("Read from Unusable address: ${addr:04x}");
                 !0
             }
-            0xff46 => self.dma.source, // DMA
-            0xff50 => !0,              // BANK
+            0xFF46 => self.dma.source, // DMA
+            0xFF50 => !0,              // BANK
 
-            0xff4c => !0, // KEY0 CPU mode register
-            0xff4d => !0, // KEY1 - CGB Mode Only - Prepare Speed Switch
-            0xff4e => !0, // ???
+            0xFF4C => !0, // KEY0 CPU mode register
+            0xFF4D => !0, // KEY1 - CGB Mode Only - Prepare Speed Switch
+            0xFF4E => !0, // ???
 
             // VBK - CGB Mode Only - VRAM Bank (R/W)
-            0xff4f => {
+            0xFF4F => {
                 if ctx.model().is_cgb() {
                     pack!(0..=0 => self.vram_bank, 1..=7 => !0)
                 } else {
@@ -171,13 +171,13 @@ impl Bus {
                 }
             }
 
-            0xff51 => !0, // HDMA1 (New DMA Source, High) (W) - CGB Mode Only
-            0xff52 => !0, // HDMA2 (New DMA Source, Low) (W) - CGB Mode Only
-            0xff53 => !0, // HDMA3 (New DMA Destination, High) (W) - CGB Mode Only
-            0xff54 => !0, // HDMA4 (New DMA Destination, Low) (W) - CGB Mode Only
+            0xFF51 => !0, // HDMA1 (New DMA Source, High) (W) - CGB Mode Only
+            0xFF52 => !0, // HDMA2 (New DMA Source, Low) (W) - CGB Mode Only
+            0xFF53 => !0, // HDMA3 (New DMA Destination, High) (W) - CGB Mode Only
+            0xFF54 => !0, // HDMA4 (New DMA Destination, Low) (W) - CGB Mode Only
 
             // HDMA5 (New DMA Length/Mode/Start) (W) - CGB Mode Only
-            0xff55 => {
+            0xFF55 => {
                 if ctx.model().is_cgb() {
                     pack! {
                         7 => !self.hdma.enabled_hblank_dma,
@@ -188,54 +188,54 @@ impl Bus {
                 }
             }
             // SVBK - CGB Mode Only - WRAM Bank
-            0xff70 => !0,
+            0xFF70 => !0,
 
             // Undocumented registers
-            0xff72 => self.reg_ff72,
-            0xff73 => self.reg_ff73,
-            0xff75 => pack! {
+            0xFF72 => self.reg_ff72,
+            0xFF73 => self.reg_ff73,
+            0xFF75 => pack! {
                 7..=7 => !0,
                 4..=6 => self.reg_ff75,
                 0..=3 => !0,
             },
 
-            0xff00..=0xff7f => self.io.read(ctx, addr),
-            0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize],
-            0xffff => self.io.read(ctx, addr),
+            0xFF00..=0xFF7F => self.io.read(ctx, addr),
+            0xFF80..=0xFFFE => self.hiram[(addr & 0x7F) as usize],
+            0xFFFF => self.io.read(ctx, addr),
         }
     }
 
     pub fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
         trace!("--> Write: ${addr:04X} = ${data:02X}");
         match addr {
-            0x0000..=0x7fff => self.mbc.write(ctx, addr, data),
-            0x8000..=0x9fff => {
-                ctx.vram_mut()[((addr & 0x1fff) | (self.vram_bank as u16 * 0x2000)) as usize] = data
+            0x0000..=0x7FFF => self.mbc.write(ctx, addr, data),
+            0x8000..=0x9FFF => {
+                ctx.vram_mut()[((addr & 0x1FFF) | (self.vram_bank as u16 * 0x2000)) as usize] = data
             }
-            0xa000..=0xbfff => self.mbc.write(ctx, addr, data),
-            0xc000..=0xfdff => {
+            0xA000..=0xBFFF => self.mbc.write(ctx, addr, data),
+            0xC000..=0xFDFF => {
                 let addr = addr % 0x1fff;
                 let bank = addr & 0x1000;
                 self.ram[((addr & 0x0fff) + bank * self.ram_bank as u16) as usize] = data;
             }
-            0xfe00..=0xfe9f => {
+            0xFE00..=0xFE9F => {
                 if !self.dma.enabled && !ctx.oam_lock() {
                     ctx.oam_mut()[(addr & 0xff) as usize] = data;
                 }
             }
-            0xfea0..=0xfeff => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
+            0xFEA0..=0xFEFF => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
 
-            0xff46 => {
+            0xFF46 => {
                 // DMA
                 self.dma.source = data;
                 self.dma.pos = 0;
                 self.dma.enabled = false;
                 self.dma.delay = 2;
             }
-            0xff50 => self.map_boot_rom = data & 1 == 0, // BANK
+            0xFF50 => self.map_boot_rom = data & 1 == 0, // BANK
 
             // KEY0 CPU mode register
-            0xff4c => {
+            0xFF4C => {
                 if ctx.model().is_cgb() {
                     let mode = match data.view_bits::<Lsb0>()[2..=3].load::<u8>() {
                         0 => context::RunningMode::Cgb,
@@ -253,7 +253,7 @@ impl Bus {
             }
 
             // KEY1 - CGB Mode Only - Prepare Speed Switch
-            0xff4d => {
+            0xFF4D => {
                 if ctx.model().is_cgb() {
                     debug!("KEY1: {data:02X}");
                     self.prepare_speed_switch = data & 1;
@@ -263,7 +263,7 @@ impl Bus {
             }
 
             // VBK - CGB Mode Only - VRAM Bank (R/W)
-            0xff4f => {
+            0xFF4F => {
                 if ctx.model().is_cgb() {
                     self.vram_bank = data & 1;
                 } else {
@@ -271,7 +271,7 @@ impl Bus {
                 }
             }
             // HDMA1 (New DMA Source, High) (W) - CGB Mode Only
-            0xff51 => {
+            0xFF51 => {
                 if ctx.model().is_cgb() {
                     self.hdma.source.view_bits_mut::<Lsb0>()[8..=15].store(data);
                 } else {
@@ -279,7 +279,7 @@ impl Bus {
                 }
             }
             // HDMA2 (New DMA Source, Low) (W) - CGB Mode Only
-            0xff52 => {
+            0xFF52 => {
                 if ctx.model().is_cgb() {
                     self.hdma.source.view_bits_mut::<Lsb0>()[0..=7].store(data & !0xf);
                 } else {
@@ -287,7 +287,7 @@ impl Bus {
                 }
             }
             // HDMA3 (New DMA Destination, High) (W) - CGB Mode Only
-            0xff53 => {
+            0xFF53 => {
                 if ctx.model().is_cgb() {
                     self.hdma.dest.view_bits_mut::<Lsb0>()[8..=12].store(data & 0x1f);
                 } else {
@@ -295,7 +295,7 @@ impl Bus {
                 }
             }
             // HDMA4 (New DMA Destination, Low) (W) - CGB Mode Only
-            0xff54 => {
+            0xFF54 => {
                 if ctx.model().is_cgb() {
                     self.hdma.dest.view_bits_mut::<Lsb0>()[0..=7].store(data & !0xf);
                 } else {
@@ -303,7 +303,7 @@ impl Bus {
                 }
             }
             // HDMA5 (New DMA Length/Mode/Start) (W) - CGB Mode Only
-            0xff55 => {
+            0xFF55 => {
                 if ctx.model().is_cgb() {
                     let v = data.view_bits::<Lsb0>();
 
@@ -329,7 +329,7 @@ impl Bus {
             }
 
             // SVBK - CGB Mode Only - WRAM Bank
-            0xff70 => {
+            0xFF70 => {
                 if ctx.model().is_cgb() {
                     self.ram_bank = max(1, data & 0x7);
                 } else {
@@ -338,14 +338,14 @@ impl Bus {
             }
 
             // Undocumented registers
-            0xff72 => self.reg_ff72 = data,
-            0xff73 => self.reg_ff73 = data,
-            0xff75 => self.reg_ff75.view_bits_mut::<Lsb0>()[4..=6]
+            0xFF72 => self.reg_ff72 = data,
+            0xFF73 => self.reg_ff73 = data,
+            0xFF75 => self.reg_ff75.view_bits_mut::<Lsb0>()[4..=6]
                 .store(data.view_bits::<Lsb0>()[4..=6].load::<u8>()),
 
-            0xff00..=0xff7f => self.io.write(ctx, addr, data),
-            0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize] = data,
-            0xffff => self.io.write(ctx, addr, data),
+            0xFF00..=0xFF7F => self.io.write(ctx, addr, data),
+            0xFF80..=0xFFFE => self.hiram[(addr & 0x7f) as usize] = data,
+            0xFFFF => self.io.write(ctx, addr, data),
         };
     }
 

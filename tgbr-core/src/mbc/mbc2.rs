@@ -15,9 +15,11 @@ impl Mbc2 {
         if let Some(ram) = &internal_ram {
             assert_eq!(ram.len(), 256);
         }
+        let rom_bank_num = rom.rom_size / 0x4000;
+        assert!(rom_bank_num.is_power_of_two());
         Self {
             rom_bank: 1,
-            rom_bank_mask: (rom.rom_size / 0x4000).saturating_sub(1) as u8,
+            rom_bank_mask: rom_bank_num.saturating_sub(1) as u8,
             ram: internal_ram.unwrap_or_else(|| vec![0; 0x100]),
             ram_enable: false,
         }
