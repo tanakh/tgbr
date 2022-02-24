@@ -214,9 +214,11 @@ impl Cpu {
                 continue;
             }
 
+            let wake = ctx.check_wake();
+
             if self.halting {
                 // FIXME: halt bug?
-                if ctx.interrupt_flag() & ctx.interrupt_enable() != 0 {
+                if wake || ctx.interrupt_flag() & ctx.interrupt_enable() != 0 {
                     self.halting = false;
                     debug!("WAKE UP");
                 }
@@ -828,7 +830,7 @@ impl Cpu {
             }};
 
             (UNK) => {
-                todo!("Unknown instruction")
+                panic!("Unknown instruction")
             };
 
             (CB) => {

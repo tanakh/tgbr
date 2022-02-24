@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::{
+    app::{AppState, FullscreenState, GameBoyState, WindowControlEvent},
     config::{Config, PersistentState},
-    AppState, FullscreenState, GameBoyState, WindowControlEvent,
 };
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{egui, EguiContext};
@@ -127,35 +127,37 @@ fn menu_system(
 
         egui::CentralPanel::default().show_inside(ui, |ui| match *menu_tab {
             MenuTab::File => {
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                    if gb_state.is_some() {
-                        if ui.button("Resume").clicked() {
-                            app_state.set(AppState::Running).unwrap();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                        if gb_state.is_some() {
+                            if ui.button("Resume").clicked() {
+                                app_state.set(AppState::Running).unwrap();
+                            }
+                            ui.separator();
                         }
+
+                        ui.label("Load ROM");
+                        if ui.button("Open File").clicked() {
+                            let file = rfd::FileDialog::new()
+                                .add_filter("GameBoy ROM file", &["gb", "gbc", "zip"])
+                                .pick_file();
+                            if let Some(file) = file {
+                                menu_event.send(MenuEvent::OpenRomFile(file));
+                            }
+                        }
+
                         ui.separator();
-                    }
+                        ui.label("Recent Files");
 
-                    ui.label("Load ROM");
-                    if ui.button("Open File").clicked() {
-                        let file = rfd::FileDialog::new()
-                            .add_filter("GameBoy ROM file", &["gb", "gbc", "zip"])
-                            .pick_file();
-                        if let Some(file) = file {
-                            menu_event.send(MenuEvent::OpenRomFile(file));
+                        for recent in &persistent_state.recent {
+                            if ui
+                                .button(recent.file_name().unwrap().to_string_lossy().to_string())
+                                .clicked()
+                            {
+                                menu_event.send(MenuEvent::OpenRomFile(recent.clone()));
+                            }
                         }
-                    }
-
-                    ui.separator();
-                    ui.label("Recent Files");
-
-                    for recent in &persistent_state.recent {
-                        if ui
-                            .button(recent.file_name().unwrap().to_string_lossy().to_string())
-                            .clicked()
-                        {
-                            menu_event.send(MenuEvent::OpenRomFile(recent.clone()));
-                        }
-                    }
+                    });
                 });
             }
             MenuTab::Setting => {

@@ -4,12 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
 use crate::{
+    app::{frame_buffer_to_image, AppState, GameBoyState, UiState, WindowControlEvent},
     config::Config,
     file::{load_state_data, save_state_data},
-    frame_buffer_to_image,
     key_assign::*,
     rewinding::AutoSavedState,
-    AppState, GameBoyState, UiState, WindowControlEvent,
 };
 
 pub struct HotKeyPlugin;

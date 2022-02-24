@@ -13,10 +13,6 @@ use crate::{
 
 trait_alias!(pub trait Context = context::Vram + context::Oam + context::InterruptFlag + context::Model);
 
-const ATTR_NONE: u8 = 0;
-const ATTR_BG: u8 = 1;
-const ATTR_OBJ: u8 = 2;
-
 #[derive(Default, Serialize, Deserialize)]
 pub struct Ppu {
     ppu_enable: bool,                     // 0=off, 1=on
@@ -40,8 +36,17 @@ pub struct Ppu {
     window_y: u8,
     window_x: u8,
 
-    bg_palette: [u8; 4],
-    obj_palette: [[u8; 4]; 2],
+    bg_pal: [u8; 4],
+    obj_pal: [[u8; 4]; 2],
+
+    bg_col_pal_incr: bool,
+    bg_col_pal_addr: u8,
+    #[serde(with = "serde_bytes")]
+    bg_col_pal: Vec<u8>,
+    obj_col_pal_incr: bool,
+    obj_col_pal_addr: u8,
+    #[serde(with = "serde_bytes")]
+    obj_col_pal: Vec<u8>,
 
     lyc: u8,
     ly: u8,
@@ -53,6 +58,8 @@ pub struct Ppu {
 
     #[serde(with = "serde_bytes")]
     line_buffer: Vec<u8>,
+    // #[serde(with = "serde_bytes")]
+    line_buffer_col: Vec<u16>,
     #[serde(with = "serde_bytes")]
     line_buffer_attr: Vec<u8>,
 
@@ -78,7 +85,10 @@ impl Default for Mode {
 impl Ppu {
     pub fn new(dmg_palette: &[Color; 4]) -> Self {
         Self {
+            bg_col_pal: vec![0; 64],
+            obj_col_pal: vec![0; 64],
             line_buffer: vec![0; SCREEN_WIDTH as usize],
+            line_buffer_col: vec![0; SCREEN_WIDTH as usize],
             line_buffer_attr: vec![0; SCREEN_WIDTH as usize],
             dmg_palette: dmg_palette.clone(),
             ..Default::default()
@@ -210,25 +220,67 @@ impl Ppu {
             0x45 => self.lyc,
             // BGP: BG Palette Data (R/W)
             0x47 => pack! {
-                6..=7 => self.bg_palette[3],
-                4..=5 => self.bg_palette[2],
-                2..=3 => self.bg_palette[1],
-                0..=1 => self.bg_palette[0],
+                6..=7 => self.bg_pal[3],
+                4..=5 => self.bg_pal[2],
+                2..=3 => self.bg_pal[1],
+                0..=1 => self.bg_pal[0],
             },
             // OBP0/1: Object Palette 0/1 Data (R/W)
             0x48 | 0x49 => {
                 let ix = (addr & 0x1) as usize;
                 pack! {
-                    6..=7 => self.obj_palette[ix][3],
-                    4..=5 => self.obj_palette[ix][2],
-                    2..=3 => self.obj_palette[ix][1],
-                    0..=1 => self.obj_palette[ix][0],
+                    6..=7 => self.obj_pal[ix][3],
+                    4..=5 => self.obj_pal[ix][2],
+                    2..=3 => self.obj_pal[ix][1],
+                    0..=1 => self.obj_pal[ix][0],
                 }
             }
             // WY: Window Y Position (R/W)
             0x4a => self.window_y,
             // WX: Window X Position (R/W)
             0x4b => self.window_x,
+
+            // BCPS/BGPI: (Background Color Palette Specification or Background Palette Index) - CGB Mode Only
+            0x68 => {
+                if ctx.model().is_cgb() {
+                    pack! {
+                        7 => self.bg_col_pal_incr,
+                        6 => true,
+                        0..=5 => self.bg_col_pal_addr,
+                    }
+                } else {
+                    !0
+                }
+            }
+            // BCPD/BGPD: (Background Color Palette Specification or Background Palette Index) - CGB Mode Only
+            0x69 => {
+                if ctx.model().is_cgb() {
+                    self.bg_col_pal[self.bg_col_pal_addr as usize]
+                } else {
+                    !0
+                }
+            }
+            // OCPS/OBPI: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
+            0x6a => {
+                if ctx.model().is_cgb() {
+                    pack! {
+                        7 => self.obj_col_pal_incr,
+                        6 => true,
+                        0..=5 => self.obj_col_pal_addr,
+                    }
+                } else {
+                    !0
+                }
+            }
+            // OCPD/OBPD: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
+            0x6b => {
+                if ctx.model().is_cgb() {
+                    self.obj_col_pal[self.obj_col_pal_addr as usize]
+                } else {
+                    !0
+                }
+            }
+
             _ => todo!("Read from LCD I/O: ${addr:04X}"),
         };
         // trace!("PPU Read: ${addr:04X} = ${data:02X}");
@@ -286,19 +338,19 @@ impl Ppu {
             // BGP: BG Palette Data (R/W)
             0x47 => {
                 let v = data.view_bits::<Lsb0>();
-                self.bg_palette[3] = v[6..=7].load();
-                self.bg_palette[2] = v[4..=5].load();
-                self.bg_palette[1] = v[2..=3].load();
-                self.bg_palette[0] = v[0..=1].load();
+                self.bg_pal[3] = v[6..=7].load();
+                self.bg_pal[2] = v[4..=5].load();
+                self.bg_pal[1] = v[2..=3].load();
+                self.bg_pal[0] = v[0..=1].load();
             }
             // OBP0/1: Object Palette 0/1 Data (R/W)
             0x48 | 0x49 => {
                 let ix = (addr & 0x1) as usize;
                 let v = data.view_bits::<Lsb0>();
-                self.obj_palette[ix][3] = v[6..=7].load();
-                self.obj_palette[ix][2] = v[4..=5].load();
-                self.obj_palette[ix][1] = v[2..=3].load();
-                self.obj_palette[ix][0] = v[0..=1].load();
+                self.obj_pal[ix][3] = v[6..=7].load();
+                self.obj_pal[ix][2] = v[4..=5].load();
+                self.obj_pal[ix][1] = v[2..=3].load();
+                self.obj_pal[ix][0] = v[0..=1].load();
             }
             // WY: Window Y Position (R/W)
             0x4a => self.window_y = data,
@@ -308,8 +360,52 @@ impl Ppu {
                 // WX values 0 and 166 are unreliable due to hardware bugs.
                 // If WX is set to 0, the window will “stutter” horizontally when SCX changes (depending on SCX % 8).
                 // If WX is set to 166, the window will span the entirety of the following scanline.
-                if self.window_x == 0 || self.window_x == 166 {
-                    warn!("WX value 0 or 166 is unreliable");
+
+                // if self.window_x == 0 || self.window_x == 166 {
+                //     warn!("WX value 0 or 166 is unreliable: WX = {}", self.window_x);
+                // }
+            }
+
+            // BCPS/BGPI: (Background Color Palette Specification or Background Palette Index) - CGB Mode Only
+            0x68 => {
+                if ctx.model().is_cgb() {
+                    let v = data.view_bits::<Lsb0>();
+                    self.bg_col_pal_incr = v[7];
+                    self.bg_col_pal_addr = v[0..=5].load();
+                } else {
+                    warn!("Writing to BCPS/BGPI in DMG mode");
+                }
+            }
+            // BCPD/BGPD: (Background Color Palette Specification or Background Palette Index) - CGB Mode Only
+            0x69 => {
+                if ctx.model().is_cgb() {
+                    self.bg_col_pal[self.bg_col_pal_addr as usize] = data;
+                    if self.bg_col_pal_incr {
+                        self.bg_col_pal_addr = (self.bg_col_pal_addr + 1) & 0x3f;
+                    }
+                } else {
+                    warn!("Writing to BCPD/BGPD in DMG mode");
+                }
+            }
+            // OCPS/OBPI: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
+            0x6a => {
+                if ctx.model().is_cgb() {
+                    let v = data.view_bits::<Lsb0>();
+                    self.obj_col_pal_incr = v[7];
+                    self.obj_col_pal_addr = v[0..=5].load();
+                } else {
+                    warn!("Writing to OCPS/OBPI in DMG mode");
+                }
+            }
+            // OCPD/OBPD: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
+            0x6b => {
+                if ctx.model().is_cgb() {
+                    self.obj_col_pal[self.obj_col_pal_addr as usize] = data;
+                    if self.obj_col_pal_incr {
+                        self.obj_col_pal_addr = (self.obj_col_pal_addr + 1) & 0x3f;
+                    }
+                } else {
+                    warn!("Writing to OCPD/OBPD in DMG mode");
                 }
             }
 
@@ -317,6 +413,7 @@ impl Ppu {
             0x6c => {
                 if ctx.model().is_cgb() {
                     // ???
+                    debug!("ORPI = ${data:02X}");
                 } else {
                     warn!("OPRI write in DMG mode");
                 }
@@ -335,25 +432,53 @@ impl Ppu {
     }
 }
 
+fn decode_color(c: u16) -> Color {
+    let v = c.view_bits::<Lsb0>();
+    Color {
+        r: v[0..=4].load::<u8>() * 8,
+        g: v[5..=9].load::<u8>() * 8,
+        b: v[10..=14].load::<u8>() * 8,
+    }
+}
+
+const Z_ORD_OBJ_HIGHEST: u8 = 10;
+const Z_ORD_BG_HIGH: u8 = 8;
+const Z_ORD_OBJ_HIGH: u8 = 6;
+const Z_ORD_BG_LOW: u8 = 4;
+const Z_ORD_OBJ_LOW: u8 = 2;
+const Z_ORD_NULL: u8 = 0;
+
 impl Ppu {
     fn render_line(&mut self, ctx: &impl Context) {
         self.line_buffer.fill(0);
-        self.line_buffer_attr.fill(ATTR_NONE);
-        if self.ppu_enable && self.bg_and_window_enable {
-            self.render_bg_line(ctx);
-        }
-        if self.ppu_enable && self.obj_enable {
-            self.render_obj_line(ctx);
-        }
+        self.line_buffer_col.fill(0);
+        self.line_buffer_attr.fill(Z_ORD_NULL);
+        self.render_bg_line(ctx);
+        self.render_obj_line(ctx);
+
         let y = self.ly as usize;
-        for x in 0..SCREEN_WIDTH as usize {
-            let c = self.line_buffer[x];
-            let color = self.dmg_palette[(c & 3) as usize];
-            self.frame_buffer.set(x, y, color)
+        if ctx.model().is_cgb() {
+            for x in 0..SCREEN_WIDTH as usize {
+                self.frame_buffer
+                    .set(x, y, decode_color(self.line_buffer_col[x]))
+            }
+        } else {
+            for x in 0..SCREEN_WIDTH as usize {
+                let c = self.line_buffer[x];
+                let color = self.dmg_palette[(c & 3) as usize];
+                self.frame_buffer.set(x, y, color)
+            }
         }
     }
 
     fn render_bg_line(&mut self, ctx: &impl Context) {
+        let is_cgb = ctx.model().is_cgb();
+        let is_cgb_mode = ctx.running_mode() == context::RunningMode::Cgb;
+
+        if !(self.ppu_enable && (self.bg_and_window_enable || is_cgb_mode)) {
+            return;
+        }
+
         let tile_data: u16 = if self.bg_and_window_tile_data_select {
             0x0000
         } else {
@@ -396,20 +521,53 @@ impl Ppu {
             let ofs_x = x as u16 % 8;
             let ofs_y = y as u16 % 8;
 
-            let tile_ix = vram[(tile_map + tile_y * 32 + tile_x) as usize];
+            let tile_ix_addr = (tile_map + tile_y * 32 + tile_x) as usize;
+            let tile_ix = vram[tile_ix_addr];
+
+            let tile_attr = if is_cgb {
+                vram[0x2000 | tile_ix_addr]
+            } else {
+                0
+            };
 
             let mut tile_addr = tile_data + (tile_ix as u16 * 16);
             if tile_addr >= 0x1800 {
                 tile_addr -= 0x1000;
             }
 
-            let lo = vram[(tile_addr + ofs_y * 2) as usize];
-            let hi = vram[(tile_addr + ofs_y * 2 + 1) as usize];
+            let tile_attr = tile_attr.view_bits::<Lsb0>();
+            let bg_to_oam_priority = tile_attr[7];
+            let vertical_flip = tile_attr[6];
+            let horizontal_flip = tile_attr[5];
+            let vram_bank = if tile_attr[3] { 0x2000 } else { 0 };
+            let pal_num: u8 = tile_attr[0..=2].load();
+
+            let ofs_x = if horizontal_flip { 7 - ofs_x } else { ofs_x };
+            let ofs_y = if vertical_flip { 7 - ofs_y } else { ofs_y };
+
+            let lo = vram[(vram_bank + tile_addr + ofs_y * 2) as usize];
+            let hi = vram[(vram_bank + tile_addr + ofs_y * 2 + 1) as usize];
 
             let b = (lo >> (7 - ofs_x)) & 1 | ((hi >> (7 - ofs_x)) & 1) << 1;
 
-            self.line_buffer[scr_x as usize] = self.bg_palette[b as usize];
-            self.line_buffer_attr[scr_x as usize] = if b != 0 { ATTR_BG } else { ATTR_NONE };
+            if !is_cgb {
+                self.line_buffer[scr_x as usize] = self.bg_pal[b as usize];
+            } else if !is_cgb_mode {
+                let b = self.bg_pal[b as usize] as usize * 2;
+                self.line_buffer_col[scr_x as usize] =
+                    u16::from_le_bytes(self.bg_col_pal[b..b + 2].try_into().unwrap());
+            } else {
+                let pal_ix = (pal_num * 4 + b) as usize * 2;
+                self.line_buffer_col[scr_x as usize] =
+                    u16::from_le_bytes(self.bg_col_pal[pal_ix..pal_ix + 2].try_into().unwrap());
+            }
+            if b != 0 {
+                self.line_buffer_attr[scr_x as usize] = if bg_to_oam_priority {
+                    Z_ORD_BG_HIGH
+                } else {
+                    Z_ORD_BG_LOW
+                };
+            }
         }
 
         if window_rendered {
@@ -418,6 +576,13 @@ impl Ppu {
     }
 
     fn render_obj_line(&mut self, ctx: &impl Context) {
+        if !(self.ppu_enable && self.obj_enable) {
+            return;
+        }
+
+        let is_cgb = ctx.model().is_cgb();
+        let is_cgb_mode = ctx.running_mode() == context::RunningMode::Cgb;
+
         let w = self.line_buffer.len();
 
         let obj_size = if self.obj_size { 16 } else { 8 };
@@ -457,12 +622,11 @@ impl Ppu {
             let y_flip = v[6];
             let x_flip = v[5];
 
-            // Non CGB Mode Only
-            let palette_number = v[4] as usize;
-
-            // CGB Mode Only
-            // let tile_vram_bank = v[3];
-            // let palette_number = v[0..=2].load();
+            let (palette_number, tile_vram_bank) = if !is_cgb_mode {
+                (v[4] as u8, 0)
+            } else {
+                (v[0..=2].load(), if v[3] { 0x2000 } else { 0 })
+            };
 
             let ofs_y = self.ly + 16 - y;
 
@@ -475,8 +639,16 @@ impl Ppu {
                     + (ofs_y & 7) as u16 * 2
             };
 
-            let lo = vram[tile_addr as usize];
-            let hi = vram[(tile_addr + 1) as usize];
+            let lo = vram[(tile_vram_bank | tile_addr) as usize];
+            let hi = vram[(tile_vram_bank | (tile_addr + 1)) as usize];
+
+            let z = if is_cgb_mode && !self.bg_and_window_enable {
+                Z_ORD_OBJ_HIGHEST
+            } else if bg_and_window_over_obj {
+                Z_ORD_OBJ_LOW
+            } else {
+                Z_ORD_OBJ_HIGH
+            };
 
             for ofs_x in 0..8 {
                 let scr_x = x as usize + ofs_x;
@@ -489,17 +661,25 @@ impl Ppu {
                 let b = (lo >> (7 - ofs_x)) & 1 | ((hi >> (7 - ofs_x)) & 1) << 1;
 
                 if b != 0 {
-                    let c = self.obj_palette[palette_number][b as usize];
-                    match self.line_buffer_attr[scr_x] {
-                        ATTR_NONE => self.line_buffer[scr_x] = c,
-                        ATTR_BG => {
-                            if !bg_and_window_over_obj {
-                                self.line_buffer[scr_x] = c;
-                            }
+                    if self.line_buffer_attr[scr_x] & 1 == 0 && z > self.line_buffer_attr[scr_x] {
+                        if !is_cgb {
+                            self.line_buffer[scr_x] =
+                                self.obj_pal[palette_number as usize][b as usize];
+                        } else if !is_cgb_mode {
+                            let b = (palette_number * 4
+                                + self.obj_pal[palette_number as usize][b as usize])
+                                as usize
+                                * 2;
+                            self.line_buffer_col[scr_x] =
+                                u16::from_le_bytes(self.obj_col_pal[b..b + 2].try_into().unwrap());
+                        } else {
+                            let pal_ix = (palette_number * 4 + b) as usize * 2;
+                            self.line_buffer_col[scr_x] = u16::from_le_bytes(
+                                self.obj_col_pal[pal_ix..pal_ix + 2].try_into().unwrap(),
+                            );
                         }
-                        _ => {}
                     }
-                    self.line_buffer_attr[scr_x] = ATTR_OBJ;
+                    self.line_buffer_attr[scr_x] |= 1;
                 }
             }
         }

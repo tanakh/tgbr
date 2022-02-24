@@ -1,7 +1,7 @@
 use ambassador::{delegatable_trait, Delegate};
 use serde::{Deserialize, Serialize};
 
-use crate::{interface::Color, mbc::create_mbc};
+use crate::{interface::Color, mbc::create_mbc, util::to_si_bytesize};
 
 #[delegatable_trait]
 pub trait Bus {
@@ -29,6 +29,12 @@ pub trait Oam {
 }
 
 #[delegatable_trait]
+pub trait ExternalRam {
+    fn external_ram(&self) -> &[u8];
+    fn external_ram_mut(&mut self) -> &mut [u8];
+}
+
+#[delegatable_trait]
 pub trait Ppu {
     fn read_ppu(&mut self, addr: u16) -> u8;
     fn write_ppu(&mut self, addr: u16, data: u8);
@@ -50,6 +56,16 @@ pub trait Rom {
 #[delegatable_trait]
 pub trait Model {
     fn model(&self) -> crate::config::Model;
+    fn running_mode(&self) -> RunningMode;
+    fn set_running_mode(&mut self, mode: RunningMode);
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub enum RunningMode {
+    Cgb,
+    Dmg,
+    Pgb1,
+    Pgb2,
 }
 
 #[delegatable_trait]
@@ -60,6 +76,8 @@ pub trait InterruptFlag {
     fn set_interrupt_flag(&mut self, data: u8);
     fn stall_cpu(&mut self, cycle: usize);
     fn check_stall_cpu(&mut self) -> bool;
+    fn wake(&mut self);
+    fn check_wake(&mut self) -> bool;
 
     fn set_interrupt_flag_bit(&mut self, bit: usize) {
         let new_flag = self.interrupt_flag() | (1 << bit);
@@ -80,9 +98,39 @@ impl Context {
         dmg_palette: &[Color; 4],
     ) -> Self {
         let io = crate::io::Io::new();
-        let mbc = create_mbc(&rom, backup_ram);
+
+        let mut backup_ram = backup_ram;
+        let internal_ram = if rom.cartridge_type.has_internal_ram() {
+            let mut dmy = None;
+            std::mem::swap(&mut dmy, &mut backup_ram);
+            dmy
+        } else {
+            None
+        };
+        let mbc = create_mbc(&rom, internal_ram);
         let bus = crate::bus::Bus::new(model, mbc, boot_rom, io);
         let vram_size = if model.is_cgb() { 0x4000 } else { 0x2000 };
+        let running_mode = if model.is_cgb() {
+            RunningMode::Cgb
+        } else {
+            RunningMode::Dmg
+        };
+
+        let external_ram = if let Some(ram) = backup_ram {
+            if !rom.cartridge_type.has_battery {
+                panic!("Trying to load backup RAM even cartridge has no battery backup RAM");
+            }
+            if ram.len() != rom.ram_size as usize {
+                panic!(
+                    "Loading backup RAM size does not match ROM's info: {} != {}",
+                    to_si_bytesize(ram.len() as _),
+                    to_si_bytesize(rom.ram_size as _)
+                );
+            }
+            ram
+        } else {
+            vec![0; rom.ram_size as usize]
+        };
 
         Self {
             cpu: crate::cpu::Cpu::new(),
@@ -94,16 +142,27 @@ impl Context {
                     apu: crate::apu::Apu::new(),
                     inner: InnerContext2 {
                         model,
+                        running_mode,
                         vram: vec![0; vram_size],
                         vram_lock: false,
                         oam: vec![0; 0xA0],
                         oam_lock: false,
+                        external_ram,
                         interrupt_enable: 0,
                         interrupt_flag: 0,
                         stall_cpu: 0,
+                        wake: false,
                     },
                 },
             },
+        }
+    }
+
+    pub fn backup_ram(&self) -> Option<Vec<u8>> {
+        if self.rom().ram_size > 0 && self.rom().cartridge_type.has_battery {
+            Some(self.external_ram().to_vec())
+        } else {
+            None
         }
     }
 }
@@ -115,6 +174,7 @@ impl Context {
 #[delegate(Model, target = "inner")]
 #[delegate(Vram, target = "inner")]
 #[delegate(Oam, target = "inner")]
+#[delegate(ExternalRam, target = "inner")]
 #[delegate(InterruptFlag, target = "inner")]
 pub struct Context {
     pub cpu: crate::cpu::Cpu,
@@ -129,6 +189,7 @@ pub struct Context {
 #[delegate(Model, target = "inner")]
 #[delegate(Vram, target = "inner")]
 #[delegate(Oam, target = "inner")]
+#[delegate(ExternalRam, target = "inner")]
 #[delegate(InterruptFlag, target = "inner")]
 pub struct InnerContext0 {
     pub bus: crate::bus::Bus,
@@ -169,6 +230,7 @@ impl Bus for InnerContext0 {
 #[delegate(Model, target = "inner")]
 #[delegate(Vram, target = "inner")]
 #[delegate(Oam, target = "inner")]
+#[delegate(ExternalRam, target = "inner")]
 #[delegate(InterruptFlag, target = "inner")]
 pub struct InnerContext1 {
     #[serde(skip)]
@@ -212,20 +274,30 @@ impl Apu for InnerContext1 {
 #[derive(Serialize, Deserialize)]
 pub struct InnerContext2 {
     model: crate::config::Model,
+    running_mode: RunningMode,
     #[serde(with = "serde_bytes")]
     vram: Vec<u8>,
     vram_lock: bool,
     #[serde(with = "serde_bytes")]
     oam: Vec<u8>,
     oam_lock: bool,
+    #[serde(with = "serde_bytes")]
+    external_ram: Vec<u8>,
     interrupt_enable: u8,
     interrupt_flag: u8,
     stall_cpu: usize,
+    wake: bool,
 }
 
 impl Model for InnerContext2 {
     fn model(&self) -> crate::config::Model {
         self.model
+    }
+    fn running_mode(&self) -> RunningMode {
+        self.running_mode
+    }
+    fn set_running_mode(&mut self, mode: RunningMode) {
+        self.running_mode = mode;
     }
 }
 
@@ -259,6 +331,15 @@ impl Oam for InnerContext2 {
     }
 }
 
+impl ExternalRam for InnerContext2 {
+    fn external_ram(&self) -> &[u8] {
+        &self.external_ram
+    }
+    fn external_ram_mut(&mut self) -> &mut [u8] {
+        &mut self.external_ram
+    }
+}
+
 impl InterruptFlag for InnerContext2 {
     fn interrupt_enable(&mut self) -> u8 {
         self.interrupt_enable
@@ -282,5 +363,13 @@ impl InterruptFlag for InnerContext2 {
         } else {
             false
         }
+    }
+    fn wake(&mut self) {
+        self.wake = true;
+    }
+    fn check_wake(&mut self) -> bool {
+        let ret = self.wake;
+        self.wake = false;
+        ret
     }
 }

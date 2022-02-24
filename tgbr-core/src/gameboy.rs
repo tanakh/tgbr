@@ -46,7 +46,7 @@ impl GameBoy {
             }
         };
 
-        log::info!("Model: {model:?}, {:?}", config.model);
+        log::info!("Model: {model:?}");
 
         let boot_rom = config.boot_roms.get(model).map(|r| r.to_owned());
 
@@ -144,9 +144,14 @@ impl GameBoy {
 
     pub fn backup_ram(&mut self) -> Option<Vec<u8>> {
         use crate::mbc::MbcTrait;
-        let mbc = self.ctx.inner.bus.mbc();
-        mbc.backup_ram(&mut self.ctx.inner.inner)
-            .map(|r| r.to_owned())
+        let external_ram = self.ctx.backup_ram();
+        let internal_ram = self.ctx.inner.bus.mbc().internal_ram();
+        assert!(!(external_ram.is_some() && internal_ram.is_some()));
+        if external_ram.is_some() {
+            external_ram
+        } else {
+            internal_ram.map(|r| r.to_vec())
+        }
     }
 
     pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + Send + Sync + 'static>) {

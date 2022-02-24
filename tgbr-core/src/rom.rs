@@ -86,6 +86,8 @@ pub enum Mbc {
     Mbc5,
     Mbc6,
     Mbc7,
+    HuC1,
+    HuC3,
 }
 
 impl Display for Mbc {
@@ -98,26 +100,28 @@ impl Display for Mbc {
             Mbc::Mbc5 => "MBC5",
             Mbc::Mbc6 => "MBC6",
             Mbc::Mbc7 => "MBC7",
+            Mbc::HuC1 => "HuC1",
+            Mbc::HuC3 => "HuC3",
         };
         write!(f, "{s}")
     }
 }
 
 impl CartridgeType {
-    fn from_code(code: u8) -> Self {
+    pub fn from_code(code: u8) -> Result<Self> {
         let ret = Self {
             code,
             ..Default::default()
         };
 
         use Mbc::*;
-        match code {
+        Ok(match code {
             0x00 => ret,
             0x01 => ret.with_mbc(Mbc1),
             0x02 => ret.with_mbc(Mbc1).with_ram(),
             0x03 => ret.with_mbc(Mbc1).with_ram().with_battery(),
             0x05 => ret.with_mbc(Mbc2),
-            0x06 => ret.with_mbc(Mbc2).with_ram(),
+            0x06 => ret.with_mbc(Mbc2).with_battery(),
             0x08 => ret.with_ram(),
             0x09 => ret.with_ram().with_battery(),
             0x0B => ret.with_mbc(Mmm01),
@@ -141,8 +145,10 @@ impl CartridgeType {
                 .with_rumble()
                 .with_ram()
                 .with_battery(),
-            _ => panic!("Unknown cartridge type: 0x{code:02x}"),
-        }
+            0xFE => ret.with_mbc(HuC3),
+            0xFF => ret.with_mbc(HuC1).with_ram().with_battery(),
+            _ => bail!("Unknown cartridge type: 0x{code:02x}"),
+        })
     }
 
     fn with_mbc(mut self, mbc: Mbc) -> Self {
@@ -170,6 +176,13 @@ impl CartridgeType {
         self.has_sensor = true;
         self
     }
+
+    pub fn has_internal_ram(&self) -> bool {
+        match &self.mbc {
+            Some(Mbc::Mbc2) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Display for CartridgeType {
@@ -195,13 +208,7 @@ impl Rom {
     pub fn from_bytes(bytes: &[u8]) -> Result<Rom> {
         let header = &bytes[0x100..=0x14f];
 
-        let title = String::from_utf8(
-            header[0x34..=0x43]
-                .iter()
-                .cloned()
-                .take_while(|c| *c != 0)
-                .collect::<Vec<_>>(),
-        )?;
+        let title = String::from_utf8_lossy(&header[0x34..=0x43]).to_string();
 
         let manufacturer_code: [u8; 4] = header[0x3f..=0x42].try_into()?;
         let cgb_flag = match header[0x43] {
@@ -214,10 +221,13 @@ impl Rom {
         let sgb_flag = match header[0x46] {
             0x03 => true,
             0x00 => false,
-            v => bail!("Invalid SGB flag: ${v:02X}"),
+            v => {
+                warn!("Invalid SGB flag: ${v:02X}");
+                false
+            }
         };
 
-        let cartridge_type = CartridgeType::from_code(header[0x47]);
+        let cartridge_type = CartridgeType::from_code(header[0x47])?;
 
         let rom_size: u64 = match header[0x48] {
             n @ (0x00..=0x08) => (32 * 1024) << n,

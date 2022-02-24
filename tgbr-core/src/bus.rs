@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use log::{debug, trace, warn};
+use log::{debug, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
@@ -31,7 +31,9 @@ pub struct Bus {
     hdma: Hdma,
 }
 
-trait_alias!(pub trait Context = context::Rom + context::Vram + context::Oam + context::Ppu + context::Apu + context::InterruptFlag + context::Model);
+trait_alias!(pub trait Context =
+    context::Rom + context::ExternalRam + context::Vram +
+    context::Oam + context::Ppu + context::Apu + context::InterruptFlag + context::Model);
 
 #[derive(Default, Serialize, Deserialize)]
 struct Dma {
@@ -142,7 +144,10 @@ impl Bus {
                     !0
                 }
             }
-            0xfea0..=0xfeff => todo!("Read from Unusable address: ${addr:04x}"),
+            0xfea0..=0xfeff => {
+                warn!("Read from Unusable address: ${addr:04x}");
+                !0
+            }
             0xff46 => self.dma.source, // DMA
             0xff50 => !0,              // BANK
 
@@ -256,15 +261,14 @@ impl Bus {
 
             // KEY0 CPU mode register
             0xff4c => {
-                // Bits 2 and 3
-                // CPU mode select
-                // 00: CGB mode (Mode used by carts supporting CGB)
-                // 01: DMG/MGB mode (Mode used by DMG/MGB-only carts)
-                // 10: PGB1 mode (STOP the CPU, with the LCD operated by an external signal)
-                // 11: PGB2 mode (CPU still running, with the LCD operated by an external signal)
-
                 if ctx.model().is_cgb() {
-                    debug!("KEY0: {data:02X}");
+                    ctx.set_running_mode(match data.view_bits::<Lsb0>()[2..=3].load::<u8>() {
+                        0 => context::RunningMode::Cgb,
+                        1 => context::RunningMode::Dmg,
+                        2 => context::RunningMode::Pgb1,
+                        3 => context::RunningMode::Pgb2,
+                        _ => unreachable!(),
+                    });
                 } else {
                     warn!("KEY0 write on non-CGB");
                 }
@@ -273,7 +277,7 @@ impl Bus {
             // KEY1 - CGB Mode Only - Prepare Speed Switch
             0xff4d => {
                 if ctx.model().is_cgb() {
-                    dbg!("KEY1: {data:02X}");
+                    debug!("KEY1: {data:02X}");
                     self.prepare_speed_switch = data & 1;
                 } else {
                     warn!("KEY1 write on non-CGB");
@@ -329,7 +333,6 @@ impl Bus {
 
                     if self.hdma.enabled_hblank_dma {
                         assert!(!v[7], "General DMA start on doing HBLANK DMA");
-
                         self.hdma.enabled_hblank_dma = false;
                     } else {
                         if v[7] {
@@ -393,13 +396,14 @@ impl Bus {
 
             self.switch_delay -= 1;
             if self.switch_delay == 0 {
-                dbg!(
+                info!(
                     "Switch speed: {} -> {}",
                     self.current_speed,
                     self.current_speed ^ 1
                 );
                 self.current_speed ^= 1;
                 self.prepare_speed_switch = 0;
+                ctx.wake();
             }
         }
     }
@@ -437,6 +441,7 @@ impl Bus {
         self.hdma.prev_hblank = cur_hblank;
 
         if self.hdma.enabled_general_dma || (self.hdma.enabled_hblank_dma && enter_hblank) {
+            log::trace!("HDMA: ${:04X} -> ${:04X}", self.hdma.source, self.hdma.dest);
             for i in 0..16 {
                 let dat = self.read_(ctx, self.hdma.source + i);
                 self.write(ctx, 0x8000 | self.hdma.dest + i, dat);
