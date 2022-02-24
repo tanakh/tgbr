@@ -33,8 +33,8 @@ pub struct Io {
 impl Io {
     pub fn new() -> Self {
         Self {
-            select_action_buttons: false,
-            select_direction_buttons: false,
+            select_action_buttons: true,
+            select_direction_buttons: true,
             divider: 0,
             timer_counter: 0,
             timer_modulo: 0,
@@ -158,7 +158,7 @@ impl Io {
             },
 
             // APU Registers
-            0x10..=0x3F => ctx.apu_mut().read(addr),
+            0x10..=0x3F | 0x76..=0x77 => ctx.apu_mut().read(addr),
             // PPU Registers
             0x40..=0x4F | 0x68..=0x6C => ctx.read_ppu(addr),
 
@@ -222,7 +222,7 @@ impl Io {
             }
 
             // APU Registers
-            0x10..=0x3F => ctx.apu_mut().write(addr, data),
+            0x10..=0x3F | 0x76..=0x77 => ctx.apu_mut().write(addr, data),
             // PPU Registers
             0x40..=0x4F | 0x68..=0x6C => ctx.write_ppu(addr, data),
 

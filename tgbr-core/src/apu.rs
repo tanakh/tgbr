@@ -213,6 +213,17 @@ impl Apu {
             // Wave Pattern RAM
             0xFF30..=0xFF3F => self.wave.ram[(addr & 0xf) as usize],
 
+            // PCM12
+            0xFF76 => pack! {
+                4..=7 => self.pulse[1].output().unwrap_or(0),
+                0..=3 => self.pulse[0].output().unwrap_or(0),
+            },
+            // PCM34
+            0xFF77 => pack! {
+                4..=7 => self.noise.output().unwrap_or(0),
+                0..=3 => self.wave.output().unwrap_or(0),
+            },
+
             _ => unreachable!(),
         };
         trace!(
@@ -261,6 +272,11 @@ impl Apu {
 
             // Wave Pattern RAM
             0xFF30..=0xFF3F => self.wave.ram[(addr & 0xf) as usize] = data,
+
+            // PCM12 - PCM amplitudes 1 & 2 (Read Only)
+            0xFF76 => {}
+            // PCM34 - PCM amplitudes 3 & 4 (Read Only)
+            0xFF77 => {}
 
             _ => unreachable!(),
         }

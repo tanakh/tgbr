@@ -1,40 +1,49 @@
 use anyhow::{bail, Result};
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, Mutex};
 
 use tgbr_core::{
     config::{Config, Model},
     gameboy::GameBoy,
     interface::LinkCable,
     rom::Rom,
+    BootRoms,
 };
 
-const DMG_BOOT_ROM: &[u8] = include_bytes!("../../assets/sameboy-bootroms/dmg_boot.bin");
+fn boot_roms() -> BootRoms {
+    BootRoms {
+        dmg: Some(include_bytes!("../../assets/sameboy-bootroms/dmg_boot.bin").to_vec()),
+        cgb: Some(include_bytes!("../../assets/sameboy-bootroms/cgb_boot.bin").to_vec()),
+        sgb: Some(include_bytes!("../../assets/sameboy-bootroms/sgb_boot.bin").to_vec()),
+        sgb2: Some(include_bytes!("../../assets/sameboy-bootroms/sgb2_boot.bin").to_vec()),
+        agb: Some(include_bytes!("../../assets/sameboy-bootroms/agb_boot.bin").to_vec()),
+    }
+}
 
-type Rr<T> = Rc<RefCell<T>>;
+type Ref<T> = Arc<Mutex<T>>;
 
 trait CheckFn: Fn(&[u8]) -> Option<Result<()>> {}
 impl<T> CheckFn for T where T: Fn(&[u8]) -> Option<Result<()>> {}
 
 struct TestLinkCable<F: CheckFn> {
     check_fn: F,
-    buf: Rr<Vec<u8>>,
-    completed: Rc<RefCell<Option<Result<()>>>>,
+    buf: Ref<Vec<u8>>,
+    completed: Ref<Option<Result<()>>>,
 }
 
 impl<F: CheckFn> TestLinkCable<F> {
-    fn new(check_fn: F, buf: &Rr<Vec<u8>>, completed: &Rr<Option<Result<()>>>) -> Self {
+    fn new(check_fn: F, buf: &Ref<Vec<u8>>, completed: &Ref<Option<Result<()>>>) -> Self {
         Self {
             check_fn,
-            buf: Rr::clone(buf),
-            completed: Rr::clone(completed),
+            buf: Ref::clone(buf),
+            completed: Ref::clone(completed),
         }
     }
 }
 
 impl<F: CheckFn> LinkCable for TestLinkCable<F> {
     fn send(&mut self, data: u8) {
-        self.buf.borrow_mut().push(data);
-        *self.completed.borrow_mut() = (self.check_fn)(self.buf.borrow().as_slice());
+        self.buf.lock().unwrap().push(data);
+        *self.completed.lock().unwrap() = (self.check_fn)(self.buf.lock().unwrap().as_slice());
     }
 
     fn try_recv(&mut self) -> Option<u8> {
@@ -42,29 +51,33 @@ impl<F: CheckFn> LinkCable for TestLinkCable<F> {
     }
 }
 
-fn test_serial_output_test_rom(rom_bytes: &[u8], check_fn: impl CheckFn + 'static) -> Result<()> {
+fn test_serial_output_test_rom(
+    rom_bytes: &[u8],
+    check_fn: impl CheckFn + Send + Sync + 'static,
+) -> Result<()> {
+    let boot_roms = boot_roms();
     let rom = Rom::from_bytes(rom_bytes)?;
     let config = Config::default()
         .set_model(Model::Dmg)
-        .set_boot_rom(Some(DMG_BOOT_ROM));
+        .set_boot_rom(boot_roms);
 
     let mut gb = GameBoy::new(rom, None, &config)?;
 
-    let buf = Rr::default();
-    let completed = Rr::default();
+    let buf = Ref::default();
+    let completed = Ref::default();
     gb.set_link_cable(Some(TestLinkCable::new(check_fn, &buf, &completed)));
 
     let mut frames = 0;
-    while completed.borrow().is_none() && frames < 1200 {
+    while completed.lock().unwrap().is_none() && frames < 1200 {
         gb.exec_frame();
         frames += 1;
     }
 
-    let completed = completed.borrow();
+    let completed = completed.lock().unwrap();
     match completed.as_ref() {
         None => bail!(
             "Test timed out: output = {}",
-            String::from_utf8_lossy(buf.borrow().as_slice())
+            String::from_utf8_lossy(buf.lock().unwrap().as_slice())
         ),
         Some(Ok(())) => Ok(()),
         Some(Err(e)) => bail!("Test failed: {}", e),

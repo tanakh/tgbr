@@ -3,6 +3,7 @@ mod mbc2;
 mod mbc5;
 
 use ambassador::{delegatable_trait, Delegate};
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -49,7 +50,7 @@ impl MbcTrait for NullMbc {
     fn write(&mut self, ctx: &mut impl Context, addr: u16, data: u8) {
         match addr {
             0xA000..=0xBFFF => ctx.external_ram_mut()[addr as usize - 0xA000] = data,
-            _ => panic!("${addr:04X} = ${data:02X}"),
+            _ => warn!("Invalid address write: ${addr:04X} = ${data:02X}"),
         }
     }
 }

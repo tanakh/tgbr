@@ -60,7 +60,7 @@ pub trait Model {
     fn set_running_mode(&mut self, mode: RunningMode);
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum RunningMode {
     Cgb,
     Dmg,

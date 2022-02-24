@@ -29,6 +29,10 @@ pub struct Bus {
     io: Io,
     dma: Dma,
     hdma: Hdma,
+    // Undocumented registers
+    reg_ff72: u8,
+    reg_ff73: u8,
+    reg_ff75: u8,
 }
 
 trait_alias!(pub trait Context =
@@ -92,6 +96,9 @@ impl Bus {
             io,
             dma: Dma::default(),
             hdma: Hdma::default(),
+            reg_ff72: 0,
+            reg_ff73: 0,
+            reg_ff75: 0,
         }
     }
 
@@ -151,18 +158,9 @@ impl Bus {
             0xff46 => self.dma.source, // DMA
             0xff50 => !0,              // BANK
 
-            // KEY1 - CGB Mode Only - Prepare Speed Switch
-            0xff4d => {
-                if ctx.model().is_cgb() {
-                    pack! {
-                        7..=7 => self.current_speed,
-                        1..=6 => !0,
-                        0..=0 => self.prepare_speed_switch,
-                    }
-                } else {
-                    !0
-                }
-            }
+            0xff4c => !0, // KEY0 CPU mode register
+            0xff4d => !0, // KEY1 - CGB Mode Only - Prepare Speed Switch
+            0xff4e => !0, // ???
 
             // VBK - CGB Mode Only - VRAM Bank (R/W)
             0xff4f => {
@@ -172,38 +170,12 @@ impl Bus {
                     !0
                 }
             }
-            // HDMA1 (New DMA Source, High) (W) - CGB Mode Only
-            0xff51 => {
-                if ctx.model().is_cgb() {
-                    self.hdma.source.view_bits_mut::<Lsb0>()[8..=15].load()
-                } else {
-                    !0
-                }
-            }
-            // HDMA2 (New DMA Source, Low) (W) - CGB Mode Only
-            0xff52 => {
-                if ctx.model().is_cgb() {
-                    self.hdma.source.view_bits_mut::<Lsb0>()[0..=7].load()
-                } else {
-                    !0
-                }
-            }
-            // HDMA3 (New DMA Destination, High) (W) - CGB Mode Only
-            0xff53 => {
-                if ctx.model().is_cgb() {
-                    self.hdma.dest.view_bits_mut::<Lsb0>()[8..=12].load()
-                } else {
-                    !0
-                }
-            }
-            // HDMA4 (New DMA Destination, Low) (W) - CGB Mode Only
-            0xff54 => {
-                if ctx.model().is_cgb() {
-                    self.hdma.dest.view_bits_mut::<Lsb0>()[0..=7].load()
-                } else {
-                    !0
-                }
-            }
+
+            0xff51 => !0, // HDMA1 (New DMA Source, High) (W) - CGB Mode Only
+            0xff52 => !0, // HDMA2 (New DMA Source, Low) (W) - CGB Mode Only
+            0xff53 => !0, // HDMA3 (New DMA Destination, High) (W) - CGB Mode Only
+            0xff54 => !0, // HDMA4 (New DMA Destination, Low) (W) - CGB Mode Only
+
             // HDMA5 (New DMA Length/Mode/Start) (W) - CGB Mode Only
             0xff55 => {
                 if ctx.model().is_cgb() {
@@ -216,13 +188,16 @@ impl Bus {
                 }
             }
             // SVBK - CGB Mode Only - WRAM Bank
-            0xff70 => {
-                if ctx.model().is_cgb() {
-                    pack!(0..=2 => self.ram_bank, 3..=7 => !0)
-                } else {
-                    !0
-                }
-            }
+            0xff70 => !0,
+
+            // Undocumented registers
+            0xff72 => self.reg_ff72,
+            0xff73 => self.reg_ff73,
+            0xff75 => pack! {
+                7..=7 => !0,
+                4..=6 => self.reg_ff75,
+                0..=3 => !0,
+            },
 
             0xff00..=0xff7f => self.io.read(ctx, addr),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize],
@@ -262,13 +237,16 @@ impl Bus {
             // KEY0 CPU mode register
             0xff4c => {
                 if ctx.model().is_cgb() {
-                    ctx.set_running_mode(match data.view_bits::<Lsb0>()[2..=3].load::<u8>() {
+                    let mode = match data.view_bits::<Lsb0>()[2..=3].load::<u8>() {
                         0 => context::RunningMode::Cgb,
                         1 => context::RunningMode::Dmg,
                         2 => context::RunningMode::Pgb1,
                         3 => context::RunningMode::Pgb2,
                         _ => unreachable!(),
-                    });
+                    };
+
+                    ctx.set_running_mode(mode);
+                    debug!("KEY0: CGB mode changed: {mode:?}");
                 } else {
                     warn!("KEY0 write on non-CGB");
                 }
@@ -358,6 +336,12 @@ impl Bus {
                     warn!("SVBK write on non-CGB");
                 }
             }
+
+            // Undocumented registers
+            0xff72 => self.reg_ff72 = data,
+            0xff73 => self.reg_ff73 = data,
+            0xff75 => self.reg_ff75.view_bits_mut::<Lsb0>()[4..=6]
+                .store(data.view_bits::<Lsb0>()[4..=6].load::<u8>()),
 
             0xff00..=0xff7f => self.io.write(ctx, addr, data),
             0xff80..=0xfffe => self.hiram[(addr & 0x7f) as usize] = data,

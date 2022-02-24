@@ -273,13 +273,9 @@ impl Ppu {
                 }
             }
             // OCPD/OBPD: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
-            0x6b => {
-                if ctx.model().is_cgb() {
-                    self.obj_col_pal[self.obj_col_pal_addr as usize]
-                } else {
-                    !0
-                }
-            }
+            0x6b => !0,
+            // OPRI - Object Priority Mode - CGB Mode Only
+            0x6c => !0,
 
             _ => todo!("Read from LCD I/O: ${addr:04X}"),
         };
