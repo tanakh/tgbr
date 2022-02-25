@@ -140,9 +140,8 @@ impl Bus {
             }
             0xA000..=0xBFFF => self.mbc.read(ctx, addr),
             0xC000..=0xFDFF => {
-                let addr = addr % 0x1FFF;
                 let bank = addr & 0x1000;
-                self.ram[((addr & 0x0fff) + bank * self.ram_bank as u16) as usize]
+                self.ram[((addr & 0x0FFF) + bank * self.ram_bank as u16) as usize]
             }
             0xFE00..=0xFE9F => {
                 if !self.dma.enabled {
@@ -159,26 +158,52 @@ impl Bus {
             0xFF50 => !0,              // BANK
 
             0xFF4C => !0, // KEY0 CPU mode register
-            0xFF4D => !0, // KEY1 - CGB Mode Only - Prepare Speed Switch
+
+            // KEY1 - CGB Mode Only - Prepare Speed Switch
+            0xFF4D => {
+                if ctx.running_mode().is_cgb() {
+                    let ret = pack! {
+                        7..=7 => self.current_speed,
+                        1..=6 => !0,
+                        0..=0 => self.prepare_speed_switch,
+                    };
+                    info!("KEY1 = ${ret:02X}");
+                    ret
+                } else {
+                    !0
+                }
+            }
             0xFF4E => !0, // ???
 
             // VBK - CGB Mode Only - VRAM Bank (R/W)
             0xFF4F => {
-                if ctx.model().is_cgb() {
+                if ctx.running_mode().is_cgb() {
                     pack!(0..=0 => self.vram_bank, 1..=7 => !0)
                 } else {
                     !0
                 }
             }
 
-            0xFF51 => !0, // HDMA1 (New DMA Source, High) (W) - CGB Mode Only
-            0xFF52 => !0, // HDMA2 (New DMA Source, Low) (W) - CGB Mode Only
-            0xFF53 => !0, // HDMA3 (New DMA Destination, High) (W) - CGB Mode Only
-            0xFF54 => !0, // HDMA4 (New DMA Destination, Low) (W) - CGB Mode Only
+            0xFF51 => {
+                warn!("Load HDMA1");
+                !0
+            } // HDMA1 (New DMA Source, High) (W) - CGB Mode Only
+            0xFF52 => {
+                warn!("Load HDMA2");
+                !0
+            } // HDMA2 (New DMA Source, Low) (W) - CGB Mode Only
+            0xFF53 => {
+                warn!("Load HDMA3");
+                !0
+            } // HDMA3 (New DMA Destination, High) (W) - CGB Mode Only
+            0xFF54 => {
+                warn!("Load HDMA4");
+                !0
+            } // HDMA4 (New DMA Destination, Low) (W) - CGB Mode Only
 
             // HDMA5 (New DMA Length/Mode/Start) (W) - CGB Mode Only
             0xFF55 => {
-                if ctx.model().is_cgb() {
+                if ctx.running_mode().is_cgb() {
                     pack! {
                         7 => !self.hdma.enabled_hblank_dma,
                         0..=6 => self.hdma.length,
@@ -188,7 +213,13 @@ impl Bus {
                 }
             }
             // SVBK - CGB Mode Only - WRAM Bank
-            0xFF70 => !0,
+            0xFF70 => {
+                if ctx.running_mode().is_cgb() {
+                    pack!(0..=2 => self.ram_bank, 3..=7 => !0)
+                } else {
+                    !0
+                }
+            }
 
             // Undocumented registers
             0xFF72 => self.reg_ff72,
@@ -214,16 +245,17 @@ impl Bus {
             }
             0xA000..=0xBFFF => self.mbc.write(ctx, addr, data),
             0xC000..=0xFDFF => {
-                let addr = addr % 0x1fff;
                 let bank = addr & 0x1000;
-                self.ram[((addr & 0x0fff) + bank * self.ram_bank as u16) as usize] = data;
+                self.ram[((addr & 0x0FFF) + bank * self.ram_bank as u16) as usize] = data;
             }
             0xFE00..=0xFE9F => {
                 if !self.dma.enabled && !ctx.oam_lock() {
                     ctx.oam_mut()[(addr & 0xff) as usize] = data;
                 }
             }
-            0xFEA0..=0xFEFF => warn!("Write to Unusable address: ${addr:04X} = ${data:02X}"),
+            0xFEA0..=0xFEFF => {
+                // warn!("Write to Unusable address: ${addr:04X} = ${data:02X}")
+            }
 
             0xFF46 => {
                 // DMA
@@ -367,6 +399,7 @@ impl Bus {
 
     pub fn stop(&mut self) {
         if self.prepare_speed_switch != 0 {
+            self.prepare_speed_switch = 0;
             self.switch_delay = 2050;
         }
     }
@@ -376,8 +409,6 @@ impl Bus {
         self.process_hdma(ctx);
 
         if self.switch_delay > 0 {
-            assert!(self.prepare_speed_switch != 0);
-
             self.switch_delay -= 1;
             if self.switch_delay == 0 {
                 info!(
@@ -386,7 +417,6 @@ impl Bus {
                     self.current_speed ^ 1
                 );
                 self.current_speed ^= 1;
-                self.prepare_speed_switch = 0;
                 ctx.wake();
             }
         }

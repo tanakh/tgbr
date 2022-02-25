@@ -253,6 +253,7 @@ impl Cpu {
 
         let prev_if = ctx.interrupt_flag();
         self.interrupt_master_enable = false;
+        self.prev_interrupt_enable = false;
 
         self.push(ctx, (ret_addr >> 8) as u8);
         // Dispatch interrupt vector at this timing

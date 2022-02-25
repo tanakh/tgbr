@@ -311,7 +311,7 @@ impl Ppu {
             }
             // SCY: Scroll Y (R/W)
             0x42 => {
-                if self.mode == Mode::Transfer {
+                if self.scroll_y != data && self.mode == Mode::Transfer {
                     debug!(
                         "SCY changed in mode3: SCY={data:3} FRM:{} Y:{:3} X:{:3}",
                         self.frame, self.ly, self.lx
@@ -321,7 +321,7 @@ impl Ppu {
             }
             // SCX: Scroll X (R/W)
             0x43 => {
-                if self.mode == Mode::Transfer {
+                if self.scroll_x != data && self.mode == Mode::Transfer {
                     debug!(
                         "SCX changed in mode3: SCX={data:3} FRM:{} Y:{:3} X:{:3}",
                         self.frame, self.ly, self.lx

@@ -68,6 +68,15 @@ pub enum RunningMode {
     Pgb2,
 }
 
+impl RunningMode {
+    pub fn is_cgb(&self) -> bool {
+        match self {
+            RunningMode::Cgb => true,
+            _ => false,
+        }
+    }
+}
+
 #[delegatable_trait]
 pub trait InterruptFlag {
     fn interrupt_enable(&mut self) -> u8;

@@ -29,7 +29,7 @@ impl Mbc3 {
         assert!(internal_ram.is_none());
         let rom_bank_num = rom.rom_size / 0x4000;
         assert!(rom_bank_num.is_power_of_two());
-        let ram_bank_num = rom.rom_size / 0x2000;
+        let ram_bank_num = rom.ram_size / 0x2000;
         assert!(ram_bank_num.is_power_of_two());
         Self {
             rom_bank: 1,
@@ -46,7 +46,6 @@ impl Mbc3 {
 
 impl super::MbcTrait for Mbc3 {
     fn read(&mut self, ctx: &mut impl Context, addr: u16) -> u8 {
-        // TODO: Advanced ROM Banking Mode
         match addr {
             0x0000..=0x3FFF => ctx.rom().data[addr as usize],
             0x4000..=0x7FFF => {
@@ -102,7 +101,7 @@ impl super::MbcTrait for Mbc3 {
                     warn!("MBC3: Latch clock data: invalid data: ${data:02X}");
                 }
 
-                if self.clock_data_req == 0 && self.clock_data_req == 1 {
+                if self.clock_data_req == 0 && data == 1 {
                     let now = Utc::now();
 
                     if self.clock_data_latch.num_days_from_ce() & 0x1FF
