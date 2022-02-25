@@ -831,7 +831,7 @@ impl Cpu {
             }};
 
             (UNK) => {
-                panic!("Unknown instruction")
+                panic!("Unknown instruction: ${opc:02X}")
             };
 
             (CB) => {
