@@ -115,11 +115,12 @@ impl Apu {
         self.sampling_counter += AUDIO_SAMPLE_PER_FRAME;
         if self.sampling_counter >= TICKS_PER_SECOND {
             self.sampling_counter -= TICKS_PER_SECOND;
-            self.audio_buffer.buf.push(self.mix_output());
+            let sample = self.mix_output();
+            self.audio_buffer.buf.push(sample);
         }
     }
 
-    fn mix_output(&self) -> AudioSample {
+    fn mix_output(&mut self) -> AudioSample {
         if !self.power_on {
             return AudioSample::new(0, 0);
         }
@@ -732,6 +733,8 @@ struct Noise {
     divisor_timer: u8,
     shift_clock_timer: u16,
     lsfr: u16,
+    sample_acc: usize,
+    sample_count: usize,
 
     length_tick_in: bool,
     prev_length_tick: bool,
@@ -822,8 +825,21 @@ impl Noise {
         }
         self.current_volume = self.initial_volume;
         self.lsfr = 0x7fff;
-        self.divisor_timer = DIVISOR[self.divisor_code as usize];
+        self.divisor_timer = DIVISOR[self.divisor_code as usize] / 2;
         self.shift_clock_timer = 1 << (self.clock_shift + 1);
+
+        log::debug!(
+            "NOISE ch trigger: {}Hz, divisor={}, shfit={}",
+            524288.0
+                / (if self.divisor_code == 0 {
+                    0.5
+                } else {
+                    self.divisor_code as f64
+                })
+                / 2.0_f64.powi(self.clock_shift as i32 + 1),
+            self.divisor_code,
+            self.clock_shift,
+        );
     }
 
     fn tick(&mut self, length_tick: bool, envelope_tick: bool) {
@@ -832,7 +848,10 @@ impl Noise {
             self.shift_clock_timer = 1 << (self.clock_shift + 1);
             self.divisor_timer = self.divisor_timer.saturating_sub(1);
             if self.divisor_timer == 0 {
-                self.divisor_timer = DIVISOR[self.divisor_code as usize];
+                self.sample_acc += ((self.lsfr & 1) ^ 1) as usize;
+                self.sample_count += 1;
+
+                self.divisor_timer = DIVISOR[self.divisor_code as usize] / 2;
                 let b = (self.lsfr & 1) ^ ((self.lsfr >> 1) & 1);
                 self.lsfr = if !self.lsfr_width {
                     (self.lsfr >> 1) | (b << 14)
@@ -888,11 +907,16 @@ impl Noise {
         }
     }
 
-    fn output(&self) -> Option<u8> {
+    fn output(&mut self) -> Option<u8> {
         if !self.on {
             None
         } else {
-            Some(((self.lsfr & 1) ^ 1) as u8 * self.current_volume)
+            let sample_acc = self.sample_acc + ((self.lsfr & 1) ^ 1) as usize;
+            let sample_count = self.sample_count + 1;
+            let ret = sample_acc * self.current_volume as usize / sample_count;
+            self.sample_acc = 0;
+            self.sample_count = 0;
+            Some(ret as u8)
         }
     }
 }

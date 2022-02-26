@@ -30,7 +30,7 @@ impl Mbc3 {
         let rom_bank_num = rom.rom_size / 0x4000;
         assert!(rom_bank_num.is_power_of_two());
         let ram_bank_num = rom.ram_size / 0x2000;
-        assert!(ram_bank_num.is_power_of_two());
+        assert!(rom.ram_size == 0 || ram_bank_num.is_power_of_two());
         Self {
             rom_bank: 1,
             rom_bank_mask: rom_bank_num.saturating_sub(1) as u8,

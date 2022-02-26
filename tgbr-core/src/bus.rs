@@ -162,13 +162,11 @@ impl Bus {
             // KEY1 - CGB Mode Only - Prepare Speed Switch
             0xFF4D => {
                 if ctx.running_mode().is_cgb() {
-                    let ret = pack! {
+                    pack! {
                         7..=7 => self.current_speed,
                         1..=6 => !0,
                         0..=0 => self.prepare_speed_switch,
-                    };
-                    info!("KEY1 = ${ret:02X}");
-                    ret
+                    }
                 } else {
                     !0
                 }
@@ -462,17 +460,15 @@ impl Bus {
             }
             self.hdma.source = self.hdma.source.wrapping_add(16);
             self.hdma.dest = self.hdma.dest.wrapping_add(16);
-            if self.hdma.dest >= 0x2000 {
-                warn!("HDMA destination overflow");
-                self.hdma.dest = self.hdma.dest & 0x1fff;
-            }
 
             let (new_length, ovf) = self.hdma.length.overflowing_sub(1);
             self.hdma.length = new_length;
-            if ovf {
+            if ovf || self.hdma.dest >= 0x2000 {
                 self.hdma.enabled_general_dma = false;
                 self.hdma.enabled_hblank_dma = false;
+                self.hdma.dest &= 0x1FFF;
             }
+
             ctx.stall_cpu(if self.current_speed == 0 { 8 } else { 16 });
         }
     }

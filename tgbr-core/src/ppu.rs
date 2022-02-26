@@ -242,7 +242,7 @@ impl Ppu {
 
             // BCPS/BGPI: (Background Color Palette Specification or Background Palette Index) - CGB Mode Only
             0x68 => {
-                if ctx.model().is_cgb() {
+                if ctx.running_mode().is_cgb() {
                     pack! {
                         7 => self.bg_col_pal_incr,
                         6 => true,
@@ -252,9 +252,9 @@ impl Ppu {
                     !0
                 }
             }
-            // BCPD/BGPD: (Background Color Palette Specification or Background Palette Index) - CGB Mode Only
+            // BCPD/BGPD: (Background Color Palette Data) - CGB Mode Only
             0x69 => {
-                if ctx.model().is_cgb() {
+                if ctx.running_mode().is_cgb() {
                     self.bg_col_pal[self.bg_col_pal_addr as usize]
                 } else {
                     !0
@@ -262,7 +262,7 @@ impl Ppu {
             }
             // OCPS/OBPI: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
             0x6A => {
-                if ctx.model().is_cgb() {
+                if ctx.running_mode().is_cgb() {
                     pack! {
                         7 => self.obj_col_pal_incr,
                         6 => true,
@@ -272,8 +272,15 @@ impl Ppu {
                     !0
                 }
             }
-            // OCPD/OBPD: (OBJ Color Palette Specification or OBJ Palette Index) - CGB Mode Only
-            0x6B => !0,
+            // OCPD/OBPD: (OBJ Color Palette Data) - CGB Mode Only
+            0x6B => {
+                if ctx.running_mode().is_cgb() {
+                    self.obj_col_pal[self.obj_col_pal_addr as usize]
+                } else {
+                    !0
+                }
+            }
+
             // OPRI - Object Priority Mode - CGB Mode Only
             0x6C => !0,
 
@@ -292,6 +299,13 @@ impl Ppu {
                 if self.ppu_enable && !v[7] && self.mode != Mode::Vblank {
                     error!("Disabling the display outside of the VBlank period");
                 }
+
+                if !self.ppu_enable && v[7] {
+                    self.ly = 0;
+                    self.lx = 0;
+                    self.frame += 1;
+                }
+
                 self.ppu_enable = v[7];
                 self.window_tile_map_select = v[6];
                 self.window_enable = v[5];

@@ -1,5 +1,7 @@
 use bitvec::prelude::*;
+use log::warn;
 use serde::{Deserialize, Serialize};
+use std::cmp::max;
 
 #[derive(Serialize, Deserialize)]
 pub struct Mbc2 {
@@ -47,14 +49,14 @@ impl super::MbcTrait for Mbc2 {
                     !0
                 }
             }
-            _ => panic!("{addr:04X}"),
+            _ => panic!("MBC2: Read ${addr:04X}"),
         }
     }
     fn write(&mut self, _ctx: &mut impl super::Context, addr: u16, data: u8) {
         match addr {
             0x0000..=0x3FFF => {
                 if addr.view_bits::<Lsb0>()[8] {
-                    self.rom_bank = data & 0xF;
+                    self.rom_bank = max(1, data & 0xF);
                 } else {
                     self.ram_enable = data == 0x0A;
                 }
@@ -70,7 +72,7 @@ impl super::MbcTrait for Mbc2 {
                     }
                 }
             }
-            _ => panic!("${addr:04X} = ${data:02X}"),
+            _ => warn!("MBC2: Write ${addr:04X} = ${data:02X}"),
         }
     }
     fn internal_ram(&self) -> Option<&[u8]> {
