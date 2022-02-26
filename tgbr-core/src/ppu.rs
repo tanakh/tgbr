@@ -444,10 +444,13 @@ impl Ppu {
 
 fn decode_color(c: u16) -> Color {
     let v = c.view_bits::<Lsb0>();
+    let r = v[0..=4].load::<u8>();
+    let g = v[5..=9].load::<u8>();
+    let b = v[10..=14].load::<u8>();
     Color {
-        r: v[0..=4].load::<u8>() * 8,
-        g: v[5..=9].load::<u8>() * 8,
-        b: v[10..=14].load::<u8>() * 8,
+        r: r << 3 | r >> 2,
+        g: g << 3 | g >> 2,
+        b: b << 3 | b >> 2,
     }
 }
 
@@ -470,7 +473,7 @@ impl Ppu {
         if ctx.model().is_cgb() {
             for x in 0..SCREEN_WIDTH as usize {
                 self.frame_buffer
-                    .set(x, y, decode_color(self.line_buffer_col[x]))
+                    .set(x, y, decode_color(self.line_buffer_col[x]));
             }
         } else {
             for x in 0..SCREEN_WIDTH as usize {

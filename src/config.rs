@@ -65,6 +65,7 @@ pub struct Config {
     model: Model,
     show_fps: bool,
     scaling: usize,
+    color_correction: bool,
     auto_state_save_freq: usize,
     auto_state_save_limit: usize,
     boot_rom: BootRom,
@@ -103,6 +104,7 @@ impl Default for Config {
             model: Model::Auto,
             show_fps: false,
             scaling: 4,
+            color_correction: true,
             auto_state_save_freq: 60,
             auto_state_save_limit: 10 * 60,
             boot_rom: BootRom::Internal,
@@ -120,7 +122,7 @@ impl Drop for Config {
 }
 
 impl Config {
-    fn save(&self) -> Result<()> {
+    pub fn save(&self) -> Result<()> {
         let s = serde_json::to_string_pretty(self)?;
         let path = config_path()?;
         fs::write(&path, s)?;
@@ -134,6 +136,15 @@ impl Config {
 
     pub fn set_scaling(&mut self, scaling: usize) {
         self.scaling = scaling;
+        self.save().unwrap();
+    }
+
+    pub fn color_correction(&self) -> bool {
+        self.color_correction
+    }
+
+    pub fn set_color_correction(&mut self, color_correction: bool) {
+        self.color_correction = color_correction;
         self.save().unwrap();
     }
 
@@ -197,6 +208,10 @@ impl Config {
 
     pub fn key_config(&self) -> &KeyConfig {
         &self.key_config
+    }
+
+    pub fn key_config_mut(&mut self) -> &mut KeyConfig {
+        &mut self.key_config
     }
 
     pub fn hotkeys(&self) -> &HotKeys {

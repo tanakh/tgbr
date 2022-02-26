@@ -1,7 +1,8 @@
 use bevy::{input::prelude::*, prelude::KeyCode};
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum KeyAssign {
     KeyCode(KeyCode),
     GamepadButton(GamepadButton),
@@ -10,10 +11,25 @@ pub enum KeyAssign {
     Any(Vec<KeyAssign>),
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum GamepadAxisDir {
     Pos,
     Neg,
+}
+
+pub struct ToStringKey<T>(pub T);
+
+impl Display for ToStringKey<KeyCode> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+impl Display for ToStringKey<GamepadButton> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let GamepadButton(gamepad, button) = &self.0;
+        write!(f, "Pad{}.{:?}", gamepad.0, button)
+    }
 }
 
 impl KeyAssign {
@@ -46,6 +62,84 @@ impl KeyAssign {
                     && ks.iter().any(|k| k.just_pressed(input_state))
             }
             KeyAssign::Any(ks) => ks.iter().any(|k| k.just_pressed(input_state)),
+            _ => false,
+        }
+    }
+
+    pub fn extract_keycode(&self) -> Option<KeyCode> {
+        match self {
+            KeyAssign::KeyCode(keycode) => Some(*keycode),
+            KeyAssign::Any(ks) => {
+                for k in ks {
+                    if let Some(keycode) = k.extract_keycode() {
+                        return Some(keycode);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub fn insert_keycode(&mut self, kc: KeyCode) {
+        if !self.try_insert_keycode(kc) {
+            *self = KeyAssign::Any(vec![KeyAssign::KeyCode(kc), self.clone()]);
+        }
+    }
+
+    fn try_insert_keycode(&mut self, kc: KeyCode) -> bool {
+        match self {
+            KeyAssign::KeyCode(r) => {
+                *r = kc;
+                true
+            }
+            KeyAssign::Any(ks) => {
+                for k in ks {
+                    if k.try_insert_keycode(kc) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    pub fn extract_gamepad(&self) -> Option<GamepadButton> {
+        match self {
+            KeyAssign::GamepadButton(button) => Some(*button),
+            KeyAssign::Any(ks) => {
+                for k in ks {
+                    if let Some(button) = k.extract_gamepad() {
+                        return Some(button);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub fn insert_gamepad(&mut self, button: GamepadButton) {
+        if !self.try_insert_gamepad(button) {
+            *self = KeyAssign::Any(vec![KeyAssign::GamepadButton(button), self.clone()]);
+        }
+    }
+
+    fn try_insert_gamepad(&mut self, button: GamepadButton) -> bool {
+        match self {
+            KeyAssign::GamepadButton(r) => {
+                *r = button;
+                true
+            }
+            KeyAssign::Any(ks) => {
+                for k in ks {
+                    if k.try_insert_gamepad(button) {
+                        return true;
+                    }
+                }
+                false
+            }
             _ => false,
         }
     }

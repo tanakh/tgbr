@@ -3,6 +3,7 @@ use bevy_easings::EasingsPlugin;
 use bevy_tiled_camera::TiledCameraPlugin;
 use log::{error, info, log_enabled};
 use std::{
+    cmp::min,
     collections::VecDeque,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -43,10 +44,10 @@ pub fn main(boot_rom: Option<PathBuf>, rom_file: Option<PathBuf>) -> Result<()> 
     .init_resource::<UiState>()
     .init_resource::<FullscreenState>()
     .insert_resource(Msaa { samples: 4 })
-    // .insert_resource(bevy::log::LogSettings {
-    //     level: bevy::utils::tracing::Level::DEBUG,
-    //     filter: "wgpu=error,tgbr_core::cpu=debug".to_string(),
-    // })
+    .insert_resource(bevy::log::LogSettings {
+        level: bevy::utils::tracing::Level::INFO,
+        filter: "wgpu=error,tgbr_core::cpu=info".to_string(),
+    })
     .add_plugins(DefaultPlugins)
     .add_plugin(FrameTimeDiagnosticsPlugin)
     .add_plugin(TiledCameraPlugin)
@@ -387,6 +388,12 @@ fn gameboy_system(
         }
     };
 
+    let cc = if config.color_correction() {
+        Box::new(CorrectColor) as Box<dyn ColorCorrection>
+    } else {
+        Box::new(RawColor) as Box<dyn ColorCorrection>
+    };
+
     if !is_turbo.0 {
         if queue.len() > samples_per_frame * 4 {
             // execution too fast. wait 1 frame.
@@ -398,7 +405,7 @@ fn gameboy_system(
             if state.frames % config.auto_state_save_freq() == 0 {
                 let saved_state = AutoSavedState {
                     data: state.gb.save_state(),
-                    thumbnail: frame_buffer_to_image(state.gb.frame_buffer()),
+                    thumbnail: cc.frame_buffer_to_image(state.gb.frame_buffer()),
                 };
 
                 state.auto_saved_states.push_back(saved_state);
@@ -419,7 +426,7 @@ fn gameboy_system(
         // Update texture
         let fb = state.gb.frame_buffer();
         let image = images.get_mut(&screen.0).unwrap();
-        copy_frame_buffer(&mut image.data, fb);
+        cc.copy_frame_buffer(&mut image.data, fb);
     } else {
         for _ in 0..5 {
             state.gb.exec_frame();
@@ -430,41 +437,77 @@ fn gameboy_system(
         // Update texture
         let fb = state.gb.frame_buffer();
         let image = images.get_mut(&screen.0).unwrap();
-        copy_frame_buffer(&mut image.data, fb);
+        cc.copy_frame_buffer(&mut image.data, fb);
         state.frames += 1;
     }
 }
 
-pub fn frame_buffer_to_image(frame_buffer: &FrameBuffer) -> Image {
-    let width = frame_buffer.width as u32;
-    let height = frame_buffer.height as u32;
-
-    let mut data = vec![0; width as usize * height as usize * 4];
-    copy_frame_buffer(&mut data, frame_buffer);
-    Image::new(
-        Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-    )
+pub fn make_color_correction(color_correction: bool) -> Box<dyn ColorCorrection> {
+    if color_correction {
+        Box::new(CorrectColor) as Box<dyn ColorCorrection>
+    } else {
+        Box::new(RawColor) as Box<dyn ColorCorrection>
+    }
 }
 
-fn copy_frame_buffer(data: &mut [u8], frame_buffer: &FrameBuffer) {
-    let width = frame_buffer.width;
-    let height = frame_buffer.height;
+pub trait ColorCorrection {
+    fn translate(&self, c: &tgbr_core::Color) -> tgbr_core::Color;
 
-    for y in 0..height {
-        for x in 0..width {
-            let ix = y * width + x;
-            let pixel = &mut data[ix * 4..ix * 4 + 4];
-            pixel[0] = frame_buffer.buf[ix].r;
-            pixel[1] = frame_buffer.buf[ix].g;
-            pixel[2] = frame_buffer.buf[ix].b;
-            pixel[3] = 0xff;
+    fn frame_buffer_to_image(&self, frame_buffer: &FrameBuffer) -> Image {
+        let width = frame_buffer.width as u32;
+        let height = frame_buffer.height as u32;
+
+        let mut data = vec![0; width as usize * height as usize * 4];
+        self.copy_frame_buffer(&mut data, frame_buffer);
+        Image::new(
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            data,
+            TextureFormat::Rgba8UnormSrgb,
+        )
+    }
+
+    fn copy_frame_buffer(&self, data: &mut [u8], frame_buffer: &FrameBuffer) {
+        let width = frame_buffer.width;
+        let height = frame_buffer.height;
+
+        for y in 0..height {
+            for x in 0..width {
+                let ix = y * width + x;
+                let pixel = &mut data[ix * 4..ix * 4 + 4];
+                let c = self.translate(&frame_buffer.buf[ix]);
+                pixel[0] = c.r;
+                pixel[1] = c.g;
+                pixel[2] = c.b;
+                pixel[3] = 0xff;
+            }
+        }
+    }
+}
+
+struct RawColor;
+
+impl ColorCorrection for RawColor {
+    fn translate(&self, c: &tgbr_core::Color) -> tgbr_core::Color {
+        c.clone()
+    }
+}
+
+struct CorrectColor;
+
+impl ColorCorrection for CorrectColor {
+    fn translate(&self, c: &tgbr_core::Color) -> tgbr_core::Color {
+        let r = c.r as u16;
+        let g = c.g as u16;
+        let b = c.b as u16;
+        tgbr_core::Color {
+            r: min(240, ((r * 26 + g * 4 + b * 2) / 32) as u8),
+            g: min(240, ((g * 24 + b * 8) / 32) as u8),
+            b: min(240, ((r * 6 + g * 4 + b * 22) / 32) as u8),
         }
     }
 }

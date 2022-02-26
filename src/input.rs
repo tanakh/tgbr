@@ -4,7 +4,7 @@ use tgbr_core::{Input as GameBoyInput, Pad};
 
 use crate::{config::Config, key_assign::*};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KeyConfig {
     pub up: KeyAssign,
     pub down: KeyAssign,

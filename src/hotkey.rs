@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
 use crate::{
-    app::{frame_buffer_to_image, AppState, GameBoyState, UiState, WindowControlEvent},
+    app::{make_color_correction, AppState, GameBoyState, UiState, WindowControlEvent},
     config::Config,
     file::{load_state_data, save_state_data},
     key_assign::*,
@@ -166,7 +166,8 @@ fn process_hotkey(
 
                     let saved_state = AutoSavedState {
                         data: gb_state.gb.save_state(),
-                        thumbnail: frame_buffer_to_image(gb_state.gb.frame_buffer()),
+                        thumbnail: make_color_correction(config.color_correction())
+                            .frame_buffer_to_image(gb_state.gb.frame_buffer()),
                     };
 
                     gb_state.auto_saved_states.push_back(saved_state);
