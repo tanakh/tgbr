@@ -49,7 +49,7 @@ impl Display for HotKey {
                 HotKey::StateLoad => "State Load",
                 HotKey::NextSlot => "State Slot Next",
                 HotKey::PrevSlot => "State Slot Prev",
-                HotKey::Rewind => "Start Rewindng Mode",
+                HotKey::Rewind => "Start Rewindng",
                 HotKey::Menu => "Enter/Leave Menu",
                 HotKey::FullScreen => "Fullsceen",
                 HotKey::ScaleUp => "Window Scale +",

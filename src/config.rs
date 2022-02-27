@@ -66,9 +66,19 @@ pub struct Config {
     auto_state_save_freq: usize,
     auto_state_save_limit: usize,
     boot_rom: BootRom,
+    custom_boot_roms: CustomBootRoms,
     palette: PaletteSelect,
     key_config: KeyConfig,
     hotkeys: HotKeys,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct CustomBootRoms {
+    pub dmg: Option<PathBuf>,
+    pub cgb: Option<PathBuf>,
+    // pub sgb: Option<PathBuf>,
+    // pub sgb2: Option<PathBuf>,
+    // pub agb: Option<PathBuf>,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,8 +102,8 @@ impl PaletteSelect {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-enum BootRom {
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BootRom {
     None,
     Internal,
     Custom,
@@ -127,6 +137,7 @@ impl Default for Config {
             auto_state_save_freq: 60,
             auto_state_save_limit: 10 * 60,
             boot_rom: BootRom::Internal,
+            custom_boot_roms: CustomBootRoms::default(),
             palette: PaletteSelect::Pocket,
             key_config: KeyConfig::default(),
             hotkeys: HotKeys::default(),
@@ -263,8 +274,38 @@ impl Config {
                     agb: lookup("AGB"),
                 }
             }
-            BootRom::Custom => todo!(),
+            BootRom::Custom => {
+                let load =
+                    |path: &Option<PathBuf>| path.as_ref().map(|path| std::fs::read(path).unwrap());
+                BootRoms {
+                    dmg: load(&self.custom_boot_roms.dmg),
+                    cgb: load(&self.custom_boot_roms.cgb),
+                    sgb: None,
+                    sgb2: None,
+                    agb: None,
+                    // sgb: load(&self.custom_boot_roms.sgb),
+                    // sgb2: load(&self.custom_boot_roms.sgb2),
+                    // agb: load(&self.custom_boot_roms.agb),
+                }
+            }
         }
+    }
+
+    pub fn boot_rom(&self) -> &BootRom {
+        &self.boot_rom
+    }
+
+    pub fn set_boot_rom(&mut self, boot_rom: BootRom) {
+        self.boot_rom = boot_rom;
+        self.save().unwrap();
+    }
+
+    pub fn custom_boot_roms(&self) -> &CustomBootRoms {
+        &self.custom_boot_roms
+    }
+
+    pub fn custom_boot_roms_mut(&mut self) -> &mut CustomBootRoms {
+        &mut self.custom_boot_roms
     }
 }
 

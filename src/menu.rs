@@ -1,6 +1,6 @@
 use crate::{
     app::{AppState, FullscreenState, GameBoyState, WindowControlEvent},
-    config::{Config, PaletteSelect, PersistentState},
+    config::{Config, PaletteSelect, PersistentState, BootRom},
     input::KeyConfig,
     key_assign::{ToStringKey, SingleKey, MultiKey}, hotkey::{HotKey, HotKeys},
 };
@@ -225,8 +225,8 @@ fn menu_system(
                 ui.heading("General Settings");
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                     ui.group(|ui| {
-                        ui.label("Model");
                         ui.horizontal(|ui| {
+                            ui.label("Model:");
                             let mut val = config.model();
                             ui.radio_value(&mut val, Model::Auto, "Auto");
                             ui.radio_value(&mut val, Model::Dmg, "GameBoy");
@@ -237,34 +237,6 @@ fn menu_system(
                         });
 
                         ui.horizontal(|ui| {
-                            ui.label("Save file directory");
-                            if ui.button("Change").clicked() {
-                                let dir = rfd::FileDialog::new()
-                                    .set_directory(config.save_dir())
-                                    .pick_folder();
-                                if let Some(dir) = dir {
-                                    config.set_save_dir(dir);
-                                }
-                            }
-                        });
-                        let s = config.save_dir().display().to_string();
-                        ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
-
-                        ui.horizontal(|ui| {
-                            ui.label("State save directory");
-                            if ui.button("Change").clicked() {
-                                let dir = rfd::FileDialog::new()
-                                    .set_directory(config.state_dir())
-                                    .pick_folder();
-                                if let Some(dir) = dir {
-                                    config.set_state_dir(dir);
-                                }
-                            }
-                        });
-                        let s = config.save_dir().display().to_string();
-                        ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
-
-                        ui.horizontal(|ui| {
                             ui.label("Frame skip on turbo:");
 
                             let mut frame_skip_on_turbo = config.frame_skip_on_turbo();
@@ -273,10 +245,45 @@ fn menu_system(
                             }
                         });
 
-                        // ui.label("Boot ROM (TODO)");
-                        // ui.radio(false, "Do not use boot ROM");
-                        // ui.radio(false, "Use internal boot ROM");
-                        // ui.radio(false, "Use specified boot ROM file");
+                        ui.separator();
+
+                        let mut save_dir = Some(config.save_dir().to_owned());
+                        if file_field(ui, "Save file directory:", &mut save_dir, &[], false) {
+                            config.set_save_dir(save_dir.unwrap());
+                        }
+                        let mut state_dir = Some(config.state_dir().to_owned());
+                        if file_field(ui, "State save directory:", &mut state_dir, &[], false) {
+                            config.set_state_dir(state_dir.unwrap());
+                        }
+
+                        ui.separator();
+
+                        ui.label("Boot ROM:");
+
+                        let mut boot_rom = config.boot_rom().clone();
+
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut boot_rom,BootRom::None, "Do not use");
+                            ui.radio_value(&mut boot_rom, BootRom::Internal, "Use internal ROM");
+                            ui.radio_value(&mut boot_rom, BootRom::Custom, "Use specified ROM");
+                        });
+
+                        if &boot_rom != config.boot_rom() {
+                            config.set_boot_rom(boot_rom.clone());
+                        }
+
+                        ui.add_enabled_ui(boot_rom == BootRom::Custom, |ui| {
+                            let mut path = config.custom_boot_roms().dmg.clone();
+                            if file_field(ui, "DMG boot ROM:", &mut path, &[("Boot ROM file", &["bin"])], true) {
+                                config.custom_boot_roms_mut().dmg = path;
+                                config.save().unwrap();
+                            }
+                            let mut path = config.custom_boot_roms().cgb.clone();
+                            if file_field(ui, "CGB boot ROM:", &mut path, &[("Boot ROM file", &["bin"])], true) {
+                                config.custom_boot_roms_mut().cgb = path;
+                                config.save().unwrap();
+                            }
+                        });
                     });
                 });
             }
@@ -427,7 +434,7 @@ fn menu_system(
                                                 .map_or_else(|| "".to_string(), |k| ToStringKey(k).to_string());
 
                                             ui.selectable_value(controller_button_ix, $ix, assign)
-                                                .on_hover_text("Click and type the key you want to assign");
+                                                .on_hover_text("Click and press the button you want to assign");
 
                                             if *controller_button_ix == $ix {
                                                 if let Some(button) = gamepad_button_input.get_just_pressed().nth(0) {
@@ -624,4 +631,41 @@ fn menu_system(
             }
         });
     });
+}
+
+fn file_field(ui: &mut egui::Ui, label: &str, path: &mut Option<PathBuf>, file_filter: &[(&str, &[&str])], has_clear: bool) -> bool {
+    let mut ret = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        if ui.button("Change").clicked() {
+            let fd = rfd::FileDialog::new();
+            let fd = if let Some(path) = path {
+                fd.set_directory(path)
+            } else {
+                fd
+            };
+            let fd = file_filter.iter().fold(fd, |fd, (name, extensions)| fd.add_filter(name, extensions));
+            let dir = if file_filter.is_empty() {
+                fd.pick_folder()
+            } else {
+                fd.pick_file()
+            };
+
+            if let Some(new_path) = dir {
+                *path = Some(new_path);
+                ret = true;
+            }
+        }
+        if has_clear {
+            if ui.button("Clear").clicked() {
+                *path = None;
+                ret = true;
+            }
+        }
+    });
+    ui.indent("", |ui| {
+        let s = path.as_ref().map_or_else(|| "N/A".to_string(), |r| r.display().to_string());
+        ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
+    });
+    ret
 }
