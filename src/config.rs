@@ -12,9 +12,8 @@ use tgbr_core::{BootRoms, Color, Model};
 
 use crate::{hotkey::HotKeys, input::KeyConfig};
 
-const FRAME_SKIP_ON_TURBO: usize = 5;
-const AUDIO_FREQUENCY: usize = 48000;
-const AUDIO_BUFFER_SAMPLES: usize = 2048;
+// const AUDIO_FREQUENCY: usize = 48000;
+// const AUDIO_BUFFER_SAMPLES: usize = 2048;
 
 pub type Palette = [Color; 4];
 
@@ -61,6 +60,7 @@ pub struct Config {
     state_dir: PathBuf,
     model: Model,
     show_fps: bool,
+    frame_skip_on_turbo: usize,
     scaling: usize,
     color_correction: bool,
     auto_state_save_freq: usize,
@@ -121,6 +121,7 @@ impl Default for Config {
             state_dir,
             model: Model::Auto,
             show_fps: false,
+            frame_skip_on_turbo: 4,
             scaling: 4,
             color_correction: true,
             auto_state_save_freq: 60,
@@ -202,6 +203,48 @@ impl Config {
         // self.save().unwrap();
     }
 
+    pub fn key_config(&self) -> &KeyConfig {
+        &self.key_config
+    }
+
+    pub fn key_config_mut(&mut self) -> &mut KeyConfig {
+        &mut self.key_config
+    }
+
+    pub fn hotkeys(&self) -> &HotKeys {
+        &self.hotkeys
+    }
+
+    pub fn hotkeys_mut(&mut self) -> &mut HotKeys {
+        &mut self.hotkeys
+    }
+
+    pub fn auto_state_save_freq(&self) -> usize {
+        self.auto_state_save_freq
+    }
+
+    pub fn auto_state_save_limit(&self) -> usize {
+        self.auto_state_save_limit
+    }
+
+    pub fn model(&self) -> Model {
+        self.model
+    }
+
+    pub fn set_model(&mut self, model: Model) {
+        self.model = model;
+        self.save().unwrap();
+    }
+
+    pub fn frame_skip_on_turbo(&self) -> usize {
+        self.frame_skip_on_turbo
+    }
+
+    pub fn set_frame_skip_on_turbo(&mut self, frame_skip_on_turbo: usize) {
+        self.frame_skip_on_turbo = frame_skip_on_turbo;
+        self.save().unwrap();
+    }
+
     pub fn boot_roms(&self) -> BootRoms {
         match self.boot_rom {
             BootRom::None => BootRoms::default(),
@@ -222,35 +265,6 @@ impl Config {
             }
             BootRom::Custom => todo!(),
         }
-    }
-
-    pub fn key_config(&self) -> &KeyConfig {
-        &self.key_config
-    }
-
-    pub fn key_config_mut(&mut self) -> &mut KeyConfig {
-        &mut self.key_config
-    }
-
-    pub fn hotkeys(&self) -> &HotKeys {
-        &self.hotkeys
-    }
-
-    pub fn auto_state_save_freq(&self) -> usize {
-        self.auto_state_save_freq
-    }
-
-    pub fn auto_state_save_limit(&self) -> usize {
-        self.auto_state_save_limit
-    }
-
-    pub fn model(&self) -> Model {
-        self.model
-    }
-
-    pub fn set_model(&mut self, model: Model) {
-        self.model = model;
-        self.save().unwrap();
     }
 }
 

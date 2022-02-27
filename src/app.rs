@@ -44,10 +44,10 @@ pub fn main(boot_rom: Option<PathBuf>, rom_file: Option<PathBuf>) -> Result<()> 
     .init_resource::<UiState>()
     .init_resource::<FullscreenState>()
     .insert_resource(Msaa { samples: 4 })
-    .insert_resource(bevy::log::LogSettings {
-        level: bevy::utils::tracing::Level::INFO,
-        filter: "wgpu=error,tgbr_core::cpu=info".to_string(),
-    })
+    // .insert_resource(bevy::log::LogSettings {
+    //     level: bevy::utils::tracing::Level::INFO,
+    //     filter: "wgpu=error,tgbr_core::cpu=info".to_string(),
+    // })
     .add_plugins(DefaultPlugins)
     .add_plugin(FrameTimeDiagnosticsPlugin)
     .add_plugin(TiledCameraPlugin)
@@ -424,7 +424,7 @@ fn gameboy_system(
         let image = images.get_mut(&screen.0).unwrap();
         cc.copy_frame_buffer(&mut image.data, fb);
     } else {
-        for _ in 0..5 {
+        for _ in 0..config.frame_skip_on_turbo() {
             state.gb.exec_frame();
             if queue.len() < samples_per_frame * 2 {
                 push_audio_queue(&mut *queue, state.gb.audio_buffer());
@@ -521,7 +521,12 @@ fn fps_system(
     let (mut text, mut visibility) = q0.single_mut();
     visibility.is_visible = config.show_fps();
     let fps_diag = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS).unwrap();
-    let fps = fps_diag.value().unwrap_or(0.0) * if is_turbo.0 { 5.0 } else { 1.0 };
+    let fps = fps_diag.value().unwrap_or(0.0)
+        * if is_turbo.0 {
+            config.frame_skip_on_turbo() as f64
+        } else {
+            1.0
+        };
     let fps = format!("{fps:5.02}");
     text.sections[0].value = fps.chars().take(5).collect();
 
