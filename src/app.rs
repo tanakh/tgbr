@@ -59,6 +59,8 @@ pub fn main(boot_rom: Option<PathBuf>, rom_file: Option<PathBuf>) -> Result<()> 
     .add_plugin(menu::MenuPlugin)
     .add_plugin(GameBoyPlugin)
     .add_plugin(rewinding::RewindingPlugin)
+    .add_plugin(FpsPlugin)
+    .add_plugin(MessagePlugin)
     .add_event::<WindowControlEvent>()
     .add_system(window_control_event)
     .insert_resource(LastClicked(0.0))
@@ -80,7 +82,14 @@ pub fn main(boot_rom: Option<PathBuf>, rom_file: Option<PathBuf>) -> Result<()> 
     Ok(())
 }
 
-fn setup(mut commands: Commands, audio: Res<StreamedAudio<AudioStreamQueue>>) {
+#[derive(Component)]
+pub struct PixelFont;
+
+fn setup(
+    mut commands: Commands,
+    audio: Res<StreamedAudio<AudioStreamQueue>>,
+    mut fonts: ResMut<Assets<Font>>,
+) {
     use bevy_tiled_camera::*;
     commands.spawn_bundle(TiledCameraBundle::new().with_target_resolution(1, [160, 144]));
 
@@ -91,6 +100,14 @@ fn setup(mut commands: Commands, audio: Res<StreamedAudio<AudioStreamQueue>>) {
     });
 
     commands.insert_resource(AudioStreamQueue { queue: audio_queue });
+
+    let pixel_font =
+        Font::try_from_bytes(include_bytes!("../assets/fonts/PixelMplus12-Regular.ttf").to_vec())
+            .unwrap();
+    commands
+        .spawn()
+        .insert(fonts.add(pixel_font))
+        .insert(PixelFont);
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -165,7 +182,6 @@ impl Plugin for GameBoyPlugin {
             .add_system_set(
                 SystemSet::on_update(AppState::Running)
                     .with_system(gameboy_system)
-                    .with_system(fps_system)
                     .after("input"),
             )
             .add_system_set(SystemSet::on_exit(AppState::Running).with_system(exit_gameboy_system));
@@ -197,17 +213,10 @@ pub struct UiState {
 #[derive(Component)]
 pub struct ScreenSprite;
 
-#[derive(Component)]
-pub struct FpsText;
-
-#[derive(Component)]
-pub struct FpsTextBg;
-
 fn setup_gameboy_system(
     mut commands: Commands,
     gb_state: Res<GameBoyState>,
     mut images: ResMut<Assets<Image>>,
-    mut fonts: ResMut<Assets<Font>>,
     mut event: EventWriter<WindowControlEvent>,
 ) {
     let width = gb_state.gb.frame_buffer().width as u32;
@@ -233,38 +242,6 @@ fn setup_gameboy_system(
 
     commands.insert_resource(GameScreen(texture));
 
-    let fps_font =
-        Font::try_from_bytes(include_bytes!("../assets/fonts/PixelMplus12-Regular.ttf").to_vec())
-            .unwrap();
-    commands
-        .spawn_bundle(Text2dBundle {
-            text: Text::with_section(
-                "",
-                TextStyle {
-                    font: fonts.add(fps_font),
-                    font_size: 24.0,
-                    color: Color::WHITE,
-                    ..Default::default()
-                },
-                TextAlignment::default(),
-            ),
-            transform: Transform::from_xyz(52.0, 72.0, 2.0).with_scale(Vec3::splat(0.5)),
-            ..Default::default()
-        })
-        .insert(FpsText);
-
-    commands
-        .spawn_bundle(SpriteBundle {
-            sprite: Sprite {
-                color: Color::rgba(0.0, 0.0, 0.0, 0.75),
-                custom_size: Some(Vec2::new(30.0, 12.0)),
-                ..Default::default()
-            },
-            transform: Transform::from_xyz(65.0, 66.0, 1.0),
-            ..Default::default()
-        })
-        .insert(FpsTextBg);
-
     event.send(WindowControlEvent::Restore);
 }
 
@@ -272,15 +249,8 @@ fn resume_gameboy_system(mut event: EventWriter<WindowControlEvent>) {
     event.send(WindowControlEvent::Restore);
 }
 
-fn exit_gameboy_system(
-    mut commands: Commands,
-    screen_entity: Query<Entity, With<ScreenSprite>>,
-    fps_text: Query<Entity, With<FpsText>>,
-    fps_text_bg: Query<Entity, With<FpsTextBg>>,
-) {
+fn exit_gameboy_system(mut commands: Commands, screen_entity: Query<Entity, With<ScreenSprite>>) {
     commands.entity(screen_entity.single()).despawn();
-    commands.entity(fps_text.single()).despawn();
-    commands.entity(fps_text_bg.single()).despawn();
 }
 
 #[derive(Default)]
@@ -347,9 +317,10 @@ fn process_double_click(
 
             if diff < 0.25 {
                 window_control_event.send(WindowControlEvent::ToggleFullscreen);
+                last_clicked.0 = cur - 1.0;
+            } else {
+                last_clicked.0 = cur;
             }
-
-            last_clicked.0 = cur;
         }
     }
 }
@@ -508,6 +479,65 @@ impl ColorCorrection for CorrectColor {
     }
 }
 
+struct FpsPlugin;
+
+impl Plugin for FpsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system_set(SystemSet::on_enter(AppState::Running).with_system(setup_fps_system))
+            .add_system_set(SystemSet::on_exit(AppState::Running).with_system(exit_fps_system))
+            .add_system_set(SystemSet::on_update(AppState::Running).with_system(fps_system));
+    }
+}
+
+#[derive(Component)]
+pub struct FpsText;
+
+#[derive(Component)]
+pub struct FpsTextBg;
+
+fn setup_fps_system(mut commands: Commands, pixel_font: Query<&Handle<Font>, With<PixelFont>>) {
+    let pixel_font = pixel_font.single();
+
+    commands
+        .spawn_bundle(Text2dBundle {
+            text: Text::with_section(
+                "",
+                TextStyle {
+                    font: pixel_font.clone(),
+                    font_size: 24.0,
+                    color: Color::WHITE,
+                    ..Default::default()
+                },
+                TextAlignment::default(),
+            ),
+            transform: Transform::from_xyz(52.0, 72.0, 2.0).with_scale(Vec3::splat(0.5)),
+            ..Default::default()
+        })
+        .insert(FpsText);
+
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::rgba(0.0, 0.0, 0.0, 0.75),
+                custom_size: Some(Vec2::new(30.0, 12.0)),
+                ..Default::default()
+            },
+            transform: Transform::from_xyz(65.0, 66.0, 1.0),
+            ..Default::default()
+        })
+        .insert(FpsTextBg);
+}
+
+fn exit_fps_system(
+    mut commands: Commands,
+
+    fps_text: Query<Entity, With<FpsText>>,
+    fps_text_bg: Query<Entity, With<FpsTextBg>>,
+) {
+    commands.entity(fps_text.single()).despawn();
+    commands.entity(fps_text_bg.single()).despawn();
+}
+
 fn fps_system(
     config: Res<config::Config>,
     diagnostics: ResMut<Diagnostics>,
@@ -533,4 +563,87 @@ fn fps_system(
     let mut q1 = q.q1();
     let mut visibility_bg = q1.single_mut();
     visibility_bg.is_visible = config.show_fps();
+}
+
+struct MessagePlugin;
+
+impl Plugin for MessagePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system(message_event_system)
+            .add_system(message_update_system)
+            .add_event::<ShowMessage>();
+    }
+}
+
+pub struct ShowMessage(pub String);
+
+#[derive(Component)]
+struct MessageText {
+    start: f64,
+}
+
+fn message_event_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut event: EventReader<ShowMessage>,
+    pixel_font: Query<&Handle<Font>, With<PixelFont>>,
+    mut messages: Query<(Entity, &Transform), With<MessageText>>,
+) {
+    let pixel_font = pixel_font.single();
+
+    for ShowMessage(msg) in event.iter() {
+        for (entity, trans) in messages.iter_mut() {
+            use bevy_easings::*;
+
+            commands.entity(entity).insert(trans.ease_to(
+                Transform::from_xyz(0.0, 15.0, 0.0) * *trans,
+                EaseFunction::CubicInOut,
+                EasingType::Once {
+                    duration: std::time::Duration::from_millis(100),
+                },
+            ));
+        }
+
+        commands
+            .spawn_bundle(Text2dBundle {
+                text: Text::with_section(
+                    msg,
+                    TextStyle {
+                        font: pixel_font.clone(),
+                        font_size: 12.0,
+                        color: Color::WHITE,
+                        ..Default::default()
+                    },
+                    TextAlignment::default(),
+                ),
+                transform: Transform::from_xyz(-80.0, -60.0, 2.0),
+                ..Default::default()
+            })
+            .insert(MessageText {
+                start: time.seconds_since_startup(),
+            })
+            .with_children(|parent| {
+                parent.spawn_bundle(SpriteBundle {
+                    sprite: Sprite {
+                        color: Color::rgba(0.0, 0.0, 0.0, 0.75),
+                        custom_size: Some(Vec2::new(160.0, 12.0)),
+                        ..Default::default()
+                    },
+                    transform: Transform::from_xyz(80.0, -6.0, -1.0),
+                    ..Default::default()
+                });
+            });
+    }
+}
+
+fn message_update_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    messages: Query<(Entity, &MessageText), With<MessageText>>,
+) {
+    for (entity, msg) in messages.iter() {
+        if time.seconds_since_startup() - msg.start > 3.0 {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
 }

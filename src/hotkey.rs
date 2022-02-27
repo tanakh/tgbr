@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::max, fmt::Display};
 
 use crate::{
-    app::{make_color_correction, AppState, GameBoyState, UiState, WindowControlEvent},
+    app::{
+        make_color_correction, AppState, GameBoyState, ShowMessage, UiState, WindowControlEvent,
+    },
     config::Config,
     file::{load_state_data, save_state_data},
     key_assign::*,
@@ -148,13 +150,14 @@ fn process_hotkey(
     mut gb_state: Option<ResMut<GameBoyState>>,
     mut ui_state: ResMut<UiState>,
     mut window_control_event: EventWriter<WindowControlEvent>,
+    mut message_event: EventWriter<ShowMessage>,
 ) {
     for hotkey in reader.iter() {
         match hotkey {
             HotKey::Reset => {
                 if let Some(state) = &mut gb_state {
                     state.gb.reset();
-                    info!("Reset machine");
+                    message_event.send(ShowMessage("Reset machine".to_string()));
                 }
             }
             HotKey::StateSave => {
@@ -167,7 +170,10 @@ fn process_hotkey(
                         config.state_dir(),
                     )
                     .unwrap();
-                    info!("State saved to slot {}", ui_state.state_save_slot);
+                    message_event.send(ShowMessage(format!(
+                        "State saved: #{}",
+                        ui_state.state_save_slot
+                    )));
                 }
             }
             HotKey::StateLoad => {
@@ -181,17 +187,29 @@ fn process_hotkey(
                         state.gb.load_state(&data)
                     })();
                     if let Err(e) = res {
+                        message_event.send(ShowMessage("Failed to load state".to_string()));
                         error!("Failed to load state: {}", e);
+                    } else {
+                        message_event.send(ShowMessage(format!(
+                            "State loaded: #{}",
+                            ui_state.state_save_slot
+                        )));
                     }
                 }
             }
             HotKey::NextSlot => {
                 ui_state.state_save_slot += 1;
-                info!("State save slot changed: {}", ui_state.state_save_slot);
+                message_event.send(ShowMessage(format!(
+                    "State slot changed: #{}",
+                    ui_state.state_save_slot
+                )));
             }
             HotKey::PrevSlot => {
                 ui_state.state_save_slot = ui_state.state_save_slot.saturating_sub(1);
-                info!("State save slot changed: {}", ui_state.state_save_slot);
+                message_event.send(ShowMessage(format!(
+                    "State slot changed: #{}",
+                    ui_state.state_save_slot
+                )));
             }
             HotKey::Rewind => {
                 if app_state.current() == &AppState::Running {

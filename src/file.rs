@@ -36,7 +36,11 @@ fn get_state_file_path(rom_file: &Path, slot: usize, state_dir: &Path) -> Result
         bail!("`{}` is not a directory", state_dir.display());
     }
 
-    Ok(state_dir.join(state_file).with_extension("state"))
+    // with_extension() is not correct when filename contains '.'
+    // so just add extension to string
+    let state_file = format!("{state_file}.state");
+
+    Ok(state_dir.join(state_file))
 }
 
 pub fn load_rom(file: &Path) -> Result<Rom> {

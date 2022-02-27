@@ -1,8 +1,9 @@
 use crate::{
     app::{AppState, FullscreenState, GameBoyState, WindowControlEvent},
-    config::{Config, PaletteSelect, PersistentState, BootRom},
+    config::{BootRom, Config, PaletteSelect, PersistentState},
+    hotkey::{HotKey, HotKeys},
     input::KeyConfig,
-    key_assign::{ToStringKey, SingleKey, MultiKey}, hotkey::{HotKey, HotKeys},
+    key_assign::{MultiKey, SingleKey, ToStringKey},
 };
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{
@@ -27,10 +28,7 @@ impl Plugin for MenuPlugin {
                     .with_system(menu_system)
                     .with_system(menu_event_system),
             )
-            .add_system_set(
-                SystemSet::on_exit(AppState::Menu)
-                    .with_system(menu_exit)
-            )
+            .add_system_set(SystemSet::on_exit(AppState::Menu).with_system(menu_exit))
             .add_event::<MenuEvent>();
     }
 }
@@ -190,7 +188,8 @@ fn menu_system(
             MenuTab::File => {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                        if gb_state.is_some() {
+                        if let Some(gb_state) = &gb_state {
+                            ui.label(format!("Running `{}`", gb_state.rom_file.file_stem().unwrap().to_string_lossy()));
                             if ui.button("Resume").clicked() {
                                 app_state.set(AppState::Running).unwrap();
                             }
@@ -633,7 +632,13 @@ fn menu_system(
     });
 }
 
-fn file_field(ui: &mut egui::Ui, label: &str, path: &mut Option<PathBuf>, file_filter: &[(&str, &[&str])], has_clear: bool) -> bool {
+fn file_field(
+    ui: &mut egui::Ui,
+    label: &str,
+    path: &mut Option<PathBuf>,
+    file_filter: &[(&str, &[&str])],
+    has_clear: bool,
+) -> bool {
     let mut ret = false;
     ui.horizontal(|ui| {
         ui.label(label);
@@ -644,7 +649,9 @@ fn file_field(ui: &mut egui::Ui, label: &str, path: &mut Option<PathBuf>, file_f
             } else {
                 fd
             };
-            let fd = file_filter.iter().fold(fd, |fd, (name, extensions)| fd.add_filter(name, extensions));
+            let fd = file_filter
+                .iter()
+                .fold(fd, |fd, (name, extensions)| fd.add_filter(name, extensions));
             let dir = if file_filter.is_empty() {
                 fd.pick_folder()
             } else {
@@ -664,7 +671,9 @@ fn file_field(ui: &mut egui::Ui, label: &str, path: &mut Option<PathBuf>, file_f
         }
     });
     ui.indent("", |ui| {
-        let s = path.as_ref().map_or_else(|| "N/A".to_string(), |r| r.display().to_string());
+        let s = path
+            .as_ref()
+            .map_or_else(|| "N/A".to_string(), |r| r.display().to_string());
         ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
     });
     ret
