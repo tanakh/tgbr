@@ -5,17 +5,17 @@ use std::fmt::Display;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeyAssign(pub Vec<MultiKey>);
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MultiKey(pub Vec<SingleKey>);
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SingleKey {
     KeyCode(KeyCode),
     GamepadButton(GamepadButton),
     GamepadAxis(GamepadAxis, GamepadAxisDir),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GamepadAxisDir {
     Pos,
     Neg,
@@ -32,7 +32,94 @@ impl Display for ToStringKey<KeyCode> {
 impl Display for ToStringKey<GamepadButton> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let GamepadButton(gamepad, button) = &self.0;
-        write!(f, "Pad{}.{:?}", gamepad.0, button)
+        write!(f, "Pad{}.{}", gamepad.0, ToStringKey(*button))
+    }
+}
+
+impl Display for ToStringKey<GamepadButtonType> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use GamepadButtonType::*;
+        write!(
+            f,
+            "{}",
+            match self.0 {
+                South => "S",
+                East => "E",
+                North => "N",
+                West => "W",
+                C => "C",
+                Z => "Z",
+                LeftTrigger => "LB",
+                LeftTrigger2 => "LT",
+                RightTrigger => "RB",
+                RightTrigger2 => "RT",
+                Select => "Select",
+                Start => "Start",
+                Mode => "Mode",
+                LeftThumb => "LS",
+                RightThumb => "RS",
+                DPadUp => "DPadUp",
+                DPadDown => "DPadDown",
+                DPadLeft => "DPadLeft",
+                DPadRight => "DPadRight",
+            }
+        )
+    }
+}
+
+impl Display for ToStringKey<(GamepadAxis, GamepadAxisDir)> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (axis, dir) = &self.0;
+        let GamepadAxis(gamepad, axis) = axis;
+        let dir = match dir {
+            GamepadAxisDir::Pos => "+",
+            GamepadAxisDir::Neg => "-",
+        };
+        write!(f, "Pad{}.{}{dir}", gamepad.0, ToStringKey(*axis))
+    }
+}
+
+impl Display for ToStringKey<GamepadAxisType> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use GamepadAxisType::*;
+        write!(
+            f,
+            "{}",
+            match self.0 {
+                LeftStickX => "LX",
+                LeftStickY => "LY",
+                LeftZ => "LZ",
+                RightStickX => "RX",
+                RightStickY => "RY",
+                RightZ => "RZ",
+                DPadX => "DPadX",
+                DPadY => "DPadY",
+            }
+        )
+    }
+}
+
+impl Display for MultiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut first = true;
+        for single_key in &self.0 {
+            if !first {
+                write!(f, "+")?;
+            }
+            write!(f, "{}", single_key)?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+
+impl Display for SingleKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SingleKey::KeyCode(kc) => write!(f, "{}", ToStringKey(*kc)),
+            SingleKey::GamepadButton(button) => write!(f, "{}", ToStringKey(*button)),
+            SingleKey::GamepadAxis(axis, dir) => write!(f, "{}", ToStringKey((*axis, *dir))),
+        }
     }
 }
 
@@ -122,9 +209,12 @@ impl MultiKey {
     }
 
     fn just_pressed(&self, input_state: &InputState<'_>) -> bool {
-        self.0
-            .iter()
-            .all(|single_key| single_key.just_pressed(input_state))
+        // all key are pressed and some key is just pressed
+        self.pressed(input_state)
+            && self
+                .0
+                .iter()
+                .any(|single_key| single_key.just_pressed(input_state))
     }
 }
 

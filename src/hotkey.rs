@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use enum_iterator::IntoEnumIterator;
 use serde::{Deserialize, Serialize};
-use std::cmp::max;
+use std::{cmp::max, fmt::Display};
 
 use crate::{
     app::{make_color_correction, AppState, GameBoyState, UiState, WindowControlEvent},
@@ -37,6 +37,28 @@ pub enum HotKey {
     ScaleDown,
 }
 
+impl Display for HotKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                HotKey::Reset => "Reset",
+                HotKey::Turbo => "Turbo",
+                HotKey::StateSave => "State Save",
+                HotKey::StateLoad => "State Load",
+                HotKey::NextSlot => "State Slot Next",
+                HotKey::PrevSlot => "State Slot Prev",
+                HotKey::Rewind => "Start Rewindng Mode",
+                HotKey::Menu => "Enter/Leave Menu",
+                HotKey::FullScreen => "Fullsceen",
+                HotKey::ScaleUp => "Window Scale +",
+                HotKey::ScaleDown => "Window Scale -",
+            }
+        )
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct HotKeys(Vec<(HotKey, KeyAssign)>);
 
@@ -69,6 +91,17 @@ impl Default for HotKeys {
 }
 
 impl HotKeys {
+    pub fn key_assign(&self, hotkey: HotKey) -> Option<&KeyAssign> {
+        self.0.iter().find(|(h, _)| *h == hotkey).map(|(_, k)| k)
+    }
+
+    pub fn key_assign_mut(&mut self, hotkey: HotKey) -> Option<&mut KeyAssign> {
+        self.0
+            .iter_mut()
+            .find(|(h, _)| *h == hotkey)
+            .map(|(_, k)| k)
+    }
+
     pub fn just_pressed(&self, hotkey: HotKey, input_state: &InputState<'_>) -> bool {
         self.0
             .iter()

@@ -1,16 +1,16 @@
-use std::{path::PathBuf, time::SystemTime};
-
 use crate::{
     app::{AppState, FullscreenState, GameBoyState, WindowControlEvent},
     config::{Config, PaletteSelect, PersistentState},
     input::KeyConfig,
-    key_assign::ToStringKey,
+    key_assign::{ToStringKey, SingleKey, MultiKey}, hotkey::{HotKey, HotKeys},
 };
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{
     egui::{self, SelectableLabel},
     EguiContext,
 };
+use enum_iterator::IntoEnumIterator;
+use std::{path::PathBuf, time::SystemTime};
 use tgbr_core::Model;
 
 pub struct MenuPlugin;
@@ -123,6 +123,8 @@ struct MenuState {
     controller_tab: ControllerTab,
     controller_button_ix: usize,
     last_palette_changed: Option<SystemTime>,
+    hotkey_select: usize,
+    constructing_hotkey: Option<Vec<SingleKey>>,
 }
 
 impl Default for MenuState {
@@ -132,6 +134,8 @@ impl Default for MenuState {
             controller_tab: ControllerTab::Keyboard,
             controller_button_ix: 0,
             last_palette_changed: None,
+            hotkey_select: 0,
+            constructing_hotkey: None,
         }
     }
 }
@@ -155,6 +159,8 @@ fn menu_system(
         controller_tab,
         controller_button_ix,
         last_palette_changed,
+        hotkey_select,
+        constructing_hotkey,
     } = menu_state.as_mut();
 
     if let Some(changed) = last_palette_changed {
@@ -257,6 +263,15 @@ fn menu_system(
                         });
                         let s = config.save_dir().display().to_string();
                         ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
+
+                        ui.horizontal(|ui| {
+                            ui.label("Frame skip on turbo:");
+
+                            let mut frame_skip_on_turbo = config.frame_skip_on_turbo();
+                            if ui.add(egui::Slider::new(&mut frame_skip_on_turbo, 1..=10)).changed() {
+                                config.set_frame_skip_on_turbo(frame_skip_on_turbo);
+                            }
+                        });
 
                         // ui.label("Boot ROM (TODO)");
                         // ui.radio(false, "Do not use boot ROM");
@@ -485,7 +500,129 @@ fn menu_system(
                 }
             }
             MenuTab::HotKey => {
-                todo!();
+                ui.heading("HotKey Settings");
+
+                let grid = |ui: &mut egui::Ui| {
+                    ui.label("HotKey");
+                    ui.label("Assignment");
+                    ui.end_row();
+
+                    ui.separator();
+                    ui.separator();
+                    ui.end_row();
+
+                    let mut ix = 1;
+                    let mut changed= false;
+                    let mut hotkey_determined = false;
+
+                    if *hotkey_select != 0 {
+                        let mut current_pushed = vec![];
+                        for r in key_code_input.get_pressed() {
+                            current_pushed.push(SingleKey::KeyCode(*r));
+                        }
+                        for r in gamepad_button_input.get_pressed() {
+                            current_pushed.push(SingleKey::GamepadButton(*r));
+                        }
+
+                        if constructing_hotkey.is_none() {
+                            if !current_pushed.is_empty() {
+                                *constructing_hotkey = Some(current_pushed);
+                            }
+                        } else {
+                            let released = constructing_hotkey.as_ref().unwrap()
+                                .iter()
+                                .any(|k| !current_pushed.contains(k));
+
+                            if released {
+                                hotkey_determined = true;
+                            } else {
+                                for pushed in current_pushed {
+                                    if !constructing_hotkey.as_ref().unwrap().contains(&pushed) {
+                                        constructing_hotkey.as_mut().unwrap().push(pushed);
+                                    }
+                                }
+                            }
+                        }
+
+                        eprintln!("{constructing_hotkey:?}");
+                    }
+
+
+                    for hotkey in HotKey::into_enum_iter() {
+                        ui.label(hotkey.to_string());
+
+                        ui.horizontal(|ui| {
+                            let key_assign = config.hotkeys_mut().key_assign_mut(hotkey).unwrap();
+                            for i in 0..key_assign.0.len() {
+
+                                let key_str = if *hotkey_select == ix {
+                                    if hotkey_determined {
+                                        *hotkey_select = 0;
+                                        key_assign.0[i] = MultiKey(constructing_hotkey.clone().unwrap());
+                                        *constructing_hotkey = None;
+                                        changed = true;
+                                    }
+
+                                    if let Some(mk) = constructing_hotkey {
+                                        MultiKey(mk.clone()).to_string()
+                                    } else {
+                                        key_assign.0[i].to_string()
+                                    }
+                                } else {
+                                    key_assign.0[i].to_string()
+                                };
+
+                                if ui.selectable_value(hotkey_select, ix, key_str)
+                                    .on_hover_text("Click to change\nRight click to remove")
+                                    .clicked_by(egui::PointerButton::Secondary) {
+                                    key_assign.0.remove(i);
+                                    break;
+                                }
+                                ix += 1;
+                            }
+
+                            let key_str = if *hotkey_select == ix {
+                                if hotkey_determined {
+                                    *hotkey_select = 0;
+                                    key_assign.0.push(MultiKey(constructing_hotkey.clone().unwrap()));
+                                    *constructing_hotkey = None;
+                                    changed = true;
+                                }
+
+                                if let Some(mk) = constructing_hotkey {
+                                    MultiKey(mk.clone()).to_string()
+                                } else {
+                                    "...".to_string()
+                                }
+                            } else {
+                                "...".to_string()
+                            };
+
+                            ui.selectable_value(hotkey_select, ix, key_str).on_hover_text("Add new key assignment");
+                            ix += 1;
+                        });
+
+                        ui.end_row();
+                    }
+
+                    if changed {
+                        config.save().unwrap();
+                    }
+                };
+
+                ui.group(|ui| {
+                    egui::Grid::new("key_config")
+                        .num_columns(2)
+                        .spacing([40.0, 4.0])
+                        .striped(true)
+                        .show(ui, grid);
+                });
+
+
+                if ui.button("Reset to default").clicked() {
+                    *config.hotkeys_mut() = HotKeys::default();
+                    config.save().unwrap();
+                }
             }
         });
     });
