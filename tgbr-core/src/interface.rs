@@ -19,7 +19,7 @@ pub struct Pad {
     pub select: bool,
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,

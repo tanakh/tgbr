@@ -166,8 +166,10 @@ fn process_hotkey(
 
                     let saved_state = AutoSavedState {
                         data: gb_state.gb.save_state(),
-                        thumbnail: make_color_correction(config.color_correction())
-                            .frame_buffer_to_image(gb_state.gb.frame_buffer()),
+                        thumbnail: make_color_correction(
+                            gb_state.gb.model().is_cgb() && config.color_correction(),
+                        )
+                        .frame_buffer_to_image(gb_state.gb.frame_buffer()),
                     };
 
                     gb_state.auto_saved_states.push_back(saved_state);

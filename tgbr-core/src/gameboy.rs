@@ -125,6 +125,11 @@ impl GameBoy {
         }
     }
 
+    pub fn model(&self) -> Model {
+        use context::Model;
+        self.ctx.model()
+    }
+
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
         self.ctx.inner.inner.ppu.set_dmg_palette(palette);
     }

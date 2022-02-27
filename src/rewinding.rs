@@ -16,6 +16,7 @@ pub struct AutoSavedState {
 pub struct RewindingState {
     pos: usize,
     load_pos: Option<usize>,
+    exit: bool,
 }
 
 pub struct RewindingPlugin;
@@ -108,6 +109,7 @@ fn enter_rewinding_system(
     commands.insert_resource(RewindingState {
         pos: state_num - 1,
         load_pos: None,
+        exit: false,
     });
 }
 
@@ -159,13 +161,28 @@ fn rewinding_system(
         return;
     }
 
+    if rewinding_state.exit {
+        app_state.pop().unwrap();
+        return;
+    }
+
     if let Some(load_pos) = &rewinding_state.load_pos {
         while gb_state.auto_saved_states.len() > *load_pos + 1 {
             gb_state.auto_saved_states.pop_back();
         }
         let state = gb_state.auto_saved_states.pop_back().unwrap();
+
+        let mut preview = preview.single_mut();
+        *preview.0 = images.add(state.thumbnail);
+        commands.entity(preview.2).insert(preview.1.ease_to(
+            Transform::from_xyz(0.0, 0.0, 1.0),
+            EaseFunction::CubicInOut,
+            EasingType::Once {
+                duration: Duration::from_millis(200),
+            },
+        ));
         gb_state.gb.load_state(&state.data).unwrap();
-        app_state.pop().unwrap();
+        rewinding_state.exit = true;
         return;
     }
 
@@ -233,17 +250,7 @@ fn rewinding_system(
 
     if config.key_config().a.just_pressed(&input_state) {
         rewinding_state.load_pos = Some(rewinding_state.pos);
-        let preview = preview.single();
-        commands.entity(preview.2).insert(preview.1.ease_to(
-            Transform::from_xyz(0.0, 0.0, 1.0),
-            EaseFunction::CubicInOut,
-            EasingType::Once {
-                duration: Duration::from_millis(200),
-            },
-        ));
-    }
-
-    if config.key_config().b.just_pressed(&input_state) {
-        app_state.pop().unwrap();
+    } else if config.key_config().b.just_pressed(&input_state) {
+        rewinding_state.load_pos = Some(gb_state.auto_saved_states.len() - 1);
     }
 }

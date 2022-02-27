@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use tgbr_core::{BootRoms, Model};
+use tgbr_core::{BootRoms, Color, Model};
 
 use crate::{hotkey::HotKeys, input::KeyConfig};
 
@@ -16,38 +16,28 @@ const FRAME_SKIP_ON_TURBO: usize = 5;
 const AUDIO_FREQUENCY: usize = 48000;
 const AUDIO_BUFFER_SAMPLES: usize = 2048;
 
-pub type Palette = [tgbr_core::Color; 4];
+pub type Palette = [Color; 4];
 
-const PALETTE_PRESET: Palette = {
-    use tgbr_core::Color;
-    // [
-    //     Color::new(155, 188, 15),
-    //     Color::new(139, 172, 15),
-    //     Color::new(48, 98, 48),
-    //     Color::new(15, 56, 15),
-    // ]
+pub const PALETTE_DMG: Palette = [
+    Color::new(120, 128, 16),
+    Color::new(92, 120, 64),
+    Color::new(56, 88, 76),
+    Color::new(40, 64, 56),
+];
 
-    // [
-    //     Color::new(155, 188, 15),
-    //     Color::new(136, 170, 10),
-    //     Color::new(48, 98, 48),
-    //     Color::new(15, 56, 15),
-    // ]
+pub const PALETTE_POCKET: Palette = [
+    Color::new(200, 200, 168),
+    Color::new(164, 164, 140),
+    Color::new(104, 104, 84),
+    Color::new(40, 40, 20),
+];
 
-    // [
-    //     Color::new(160, 207, 10),
-    //     Color::new(140, 191, 10),
-    //     Color::new(46, 115, 32),
-    //     Color::new(0, 63, 0),
-    // ]
-
-    [
-        Color::new(200, 200, 168),
-        Color::new(164, 164, 140),
-        Color::new(104, 104, 84),
-        Color::new(40, 40, 20),
-    ]
-};
+pub const PALETTE_LIGHT: Palette = [
+    Color::new(0, 178, 132),
+    Color::new(0, 156, 116),
+    Color::new(0, 104, 74),
+    Color::new(0, 80, 56),
+];
 
 #[rustfmt::skip]
 const BOOT_ROMS: &[(&str, &[u8])] = &[
@@ -69,9 +59,28 @@ pub struct Config {
     auto_state_save_freq: usize,
     auto_state_save_limit: usize,
     boot_rom: BootRom,
-    palette: [tgbr_core::Color; 4],
+    palette: PaletteSelect,
     key_config: KeyConfig,
     hotkeys: HotKeys,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PaletteSelect {
+    Dmg,
+    Pocket,
+    Light,
+    Custom(Palette),
+}
+
+impl PaletteSelect {
+    pub fn get_palette(&self) -> &Palette {
+        match self {
+            PaletteSelect::Dmg => &PALETTE_DMG,
+            PaletteSelect::Pocket => &PALETTE_POCKET,
+            PaletteSelect::Light => &PALETTE_LIGHT,
+            PaletteSelect::Custom(pal) => pal,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -108,7 +117,7 @@ impl Default for Config {
             auto_state_save_freq: 60,
             auto_state_save_limit: 10 * 60,
             boot_rom: BootRom::Internal,
-            palette: PALETTE_PRESET,
+            palette: PaletteSelect::Pocket,
             key_config: KeyConfig::default(),
             hotkeys: HotKeys::default(),
         }
@@ -175,13 +184,13 @@ impl Config {
         self.save().unwrap();
     }
 
-    pub fn palette(&self) -> &Palette {
+    pub fn palette(&self) -> &PaletteSelect {
         &self.palette
     }
 
-    pub fn set_palette(&mut self, palette: Palette) {
+    pub fn set_palette(&mut self, palette: PaletteSelect) {
         self.palette = palette;
-        self.save().unwrap();
+        // self.save().unwrap();
     }
 
     pub fn boot_roms(&self) -> BootRoms {

@@ -1,13 +1,16 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::SystemTime};
 
 use crate::{
     app::{AppState, FullscreenState, GameBoyState, WindowControlEvent},
-    config::{Config, PersistentState},
+    config::{Config, PaletteSelect, PersistentState},
     input::KeyConfig,
     key_assign::ToStringKey,
 };
 use bevy::{app::AppExit, prelude::*};
-use bevy_egui::{egui, EguiContext};
+use bevy_egui::{
+    egui::{self, SelectableLabel},
+    EguiContext,
+};
 use tgbr_core::Model;
 
 pub struct MenuPlugin;
@@ -23,6 +26,10 @@ impl Plugin for MenuPlugin {
                 SystemSet::on_update(AppState::Menu)
                     .with_system(menu_system)
                     .with_system(menu_event_system),
+            )
+            .add_system_set(
+                SystemSet::on_exit(AppState::Menu)
+                    .with_system(menu_exit)
             )
             .add_event::<MenuEvent>();
     }
@@ -66,12 +73,16 @@ fn menu_setup(
     commands.insert_resource(MenuState::default());
 }
 
+fn menu_exit(config: Res<Config>) {
+    config.save().unwrap();
+}
+
 fn menu_event_system(
     mut commands: Commands,
     mut event: EventReader<MenuEvent>,
     mut app_state: ResMut<State<AppState>>,
     mut persistent_state: ResMut<PersistentState>,
-    config: ResMut<Config>,
+    config: Res<Config>,
 ) {
     for event in event.iter() {
         match event {
@@ -95,14 +106,9 @@ fn menu_event_system(
 #[derive(PartialEq, Eq)]
 enum MenuTab {
     File,
-    Setting,
+    GeneralSetting,
+    Graphics,
     Controller,
-}
-
-impl Default for MenuTab {
-    fn default() -> Self {
-        MenuTab::File
-    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -111,17 +117,22 @@ enum ControllerTab {
     Gamepad,
 }
 
-impl Default for ControllerTab {
-    fn default() -> Self {
-        ControllerTab::Keyboard
-    }
-}
-
-#[derive(Default)]
 struct MenuState {
     tab: MenuTab,
     controller_tab: ControllerTab,
     controller_button_ix: usize,
+    last_palette_changed: Option<SystemTime>,
+}
+
+impl Default for MenuState {
+    fn default() -> Self {
+        MenuState {
+            tab: MenuTab::File,
+            controller_tab: ControllerTab::Keyboard,
+            controller_button_ix: 0,
+            last_palette_changed: None,
+        }
+    }
 }
 
 fn menu_system(
@@ -130,7 +141,7 @@ fn menu_system(
     mut egui_ctx: ResMut<EguiContext>,
     mut app_state: ResMut<State<AppState>>,
     mut menu_state: ResMut<MenuState>,
-    gb_state: Option<Res<GameBoyState>>,
+    mut gb_state: Option<ResMut<GameBoyState>>,
     mut exit: EventWriter<AppExit>,
     mut menu_event: EventWriter<MenuEvent>,
     mut window_control_event: EventWriter<WindowControlEvent>,
@@ -142,7 +153,15 @@ fn menu_system(
         tab,
         controller_tab,
         controller_button_ix,
+        last_palette_changed,
     } = menu_state.as_mut();
+
+    if let Some(changed) = last_palette_changed {
+        if changed.elapsed().unwrap().as_secs_f64() > 5.0 {
+            config.save().unwrap();
+            *last_palette_changed = None;
+        }
+    }
 
     egui::CentralPanel::default().show(egui_ctx.ctx_mut(), |ui| {
         let width = ui.available_width();
@@ -150,7 +169,8 @@ fn menu_system(
             ui.set_width(width / 4.0);
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                 ui.selectable_value(tab, MenuTab::File, "📁File");
-                ui.selectable_value(tab, MenuTab::Setting, "🔧Setting");
+                ui.selectable_value(tab, MenuTab::GeneralSetting, "🔧General Setting");
+                ui.selectable_value(tab, MenuTab::Graphics, "🖼Graphics");
                 ui.selectable_value(tab, MenuTab::Controller, "🎮Controller");
                 if ui.button("↩Quit").clicked() {
                     exit.send(AppExit);
@@ -193,97 +213,136 @@ fn menu_system(
                     });
                 });
             }
-            MenuTab::Setting => {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                        ui.heading("General Settings");
-                        ui.group(|ui| {
-                            ui.label("Model");
-                            ui.horizontal(|ui| {
-                                let mut val = config.model();
-                                ui.radio_value(&mut val, Model::Auto, "Auto");
-                                ui.radio_value(&mut val, Model::Dmg, "GameBoy");
-                                ui.radio_value(&mut val, Model::Cgb, "GameBoy Color");
-                                if config.model() != val {
-                                    config.set_model(val);
-                                }
-                            });
-
-                            ui.horizontal(|ui| {
-                                ui.label("Save file directory");
-                                if ui.button("Change").clicked() {
-                                    let dir = rfd::FileDialog::new()
-                                        .set_directory(config.save_dir())
-                                        .pick_folder();
-                                    if let Some(dir) = dir {
-                                        config.set_save_dir(dir);
-                                    }
-                                }
-                            });
-                            let s = config.save_dir().display().to_string();
-                            ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
-
-                            ui.horizontal(|ui| {
-                                ui.label("State save directory");
-                                if ui.button("Change").clicked() {
-                                    let dir = rfd::FileDialog::new()
-                                        .set_directory(config.state_dir())
-                                        .pick_folder();
-                                    if let Some(dir) = dir {
-                                        config.set_state_dir(dir);
-                                    }
-                                }
-                            });
-                            let s = config.save_dir().display().to_string();
-                            ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
-
-                            // ui.label("Boot ROM (TODO)");
-                            // ui.radio(false, "Do not use boot ROM");
-                            // ui.radio(false, "Use internal boot ROM");
-                            // ui.radio(false, "Use specified boot ROM file");
+            MenuTab::GeneralSetting => {
+                ui.heading("General Settings");
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                    ui.group(|ui| {
+                        ui.label("Model");
+                        ui.horizontal(|ui| {
+                            let mut val = config.model();
+                            ui.radio_value(&mut val, Model::Auto, "Auto");
+                            ui.radio_value(&mut val, Model::Dmg, "GameBoy");
+                            ui.radio_value(&mut val, Model::Cgb, "GameBoy Color");
+                            if config.model() != val {
+                                config.set_model(val);
+                            }
                         });
 
-                        ui.heading("Graphics");
-                        ui.group(|ui| {
-                            let mut color_correction = config.color_correction();
-                            if ui
-                                .checkbox(&mut color_correction, "Color Correction")
-                                .changed()
-                            {
-                                config.set_color_correction(color_correction);
-                            }
-
-                            let mut show_fps = config.show_fps();
-                            if ui.checkbox(&mut show_fps, "Display FPS").changed() {
-                                config.set_show_fps(show_fps);
-                            }
-
-                            let mut fullscreen = fullscreen_state.0;
-                            if ui.checkbox(&mut fullscreen, "FullScreen").changed() {
-                                window_control_event.send(WindowControlEvent::ToggleFullscreen);
-                            }
-
-                            ui.horizontal(|ui| {
-                                ui.label("Window Scale");
-
-                                let mut scale = config.scaling();
-                                if ui.add(egui::Slider::new(&mut scale, 1..=8)).changed() {
-                                    window_control_event
-                                        .send(WindowControlEvent::ChangeScale(scale));
+                        ui.horizontal(|ui| {
+                            ui.label("Save file directory");
+                            if ui.button("Change").clicked() {
+                                let dir = rfd::FileDialog::new()
+                                    .set_directory(config.save_dir())
+                                    .pick_folder();
+                                if let Some(dir) = dir {
+                                    config.set_save_dir(dir);
                                 }
-                            });
+                            }
+                        });
+                        let s = config.save_dir().display().to_string();
+                        ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
 
-                            ui.label("GameBoy Color Palette");
-                            ui.label("UNDERCONSTRUCTIONS");
+                        ui.horizontal(|ui| {
+                            ui.label("State save directory");
+                            if ui.button("Change").clicked() {
+                                let dir = rfd::FileDialog::new()
+                                    .set_directory(config.state_dir())
+                                    .pick_folder();
+                                if let Some(dir) = dir {
+                                    config.set_state_dir(dir);
+                                }
+                            }
+                        });
+                        let s = config.save_dir().display().to_string();
+                        ui.add(egui::TextEdit::singleline(&mut s.as_ref()));
+
+                        // ui.label("Boot ROM (TODO)");
+                        // ui.radio(false, "Do not use boot ROM");
+                        // ui.radio(false, "Use internal boot ROM");
+                        // ui.radio(false, "Use specified boot ROM file");
+                    });
+                });
+            }
+            MenuTab::Graphics => {
+                ui.heading("Gaphics Settings");
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                    ui.group(|ui| {
+                        let mut color_correction = config.color_correction();
+                        if ui
+                            .checkbox(&mut color_correction, "Color Correction")
+                            .changed()
+                        {
+                            config.set_color_correction(color_correction);
+                        }
+
+                        let mut show_fps = config.show_fps();
+                        if ui.checkbox(&mut show_fps, "Display FPS").changed() {
+                            config.set_show_fps(show_fps);
+                        }
+
+                        let mut fullscreen = fullscreen_state.0;
+                        if ui.checkbox(&mut fullscreen, "FullScreen").changed() {
+                            window_control_event.send(WindowControlEvent::ToggleFullscreen);
+                        }
+
+                        ui.horizontal(|ui| {
+                            ui.label("Window Scale:");
+
+                            let mut scale = config.scaling();
+                            if ui.add(egui::Slider::new(&mut scale, 1..=8)).changed() {
+                                window_control_event
+                                    .send(WindowControlEvent::ChangeScale(scale));
+                            }
                         });
 
-                        ui.heading("Audio");
-                        ui.label("TODO");
-                        ui.separator();
+                        ui.label("GameBoy Palette:");
+
+                        let mut pal: PaletteSelect = config.palette().clone();
+
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_label("")
+                                .width(250.0)
+                                .selected_text(match pal {
+                                    PaletteSelect::Dmg => "GameBoy",
+                                    PaletteSelect::Pocket => "GameBoy Pocket",
+                                    PaletteSelect::Light => "GameBoy Light",
+                                    PaletteSelect::Custom(_) => "Custom",
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut pal, PaletteSelect::Dmg, "GameBoy");
+                                    ui.selectable_value(&mut pal, PaletteSelect::Pocket, "GameBoy Pocket");
+                                    ui.selectable_value(&mut pal, PaletteSelect::Light, "GameBoy Light");
+                                    if ui.add(SelectableLabel::new(matches!(pal, PaletteSelect::Custom(_)), "Custom")).clicked() {
+                                        pal = PaletteSelect::Custom(pal.get_palette().clone());
+                                    }
+                                }
+                            );
+
+                            let cols = pal.get_palette().clone();
+
+                            for i in (0..4).rev() {
+                                let mut col = [cols[i].r, cols[i].g, cols[i].b];
+                                ui.color_edit_button_srgb(&mut col).changed();
+                                
+                                if let PaletteSelect::Custom(r) = &mut pal {
+                                    r[i] = tgbr_core::Color::new(col[0], col[1], col[2]);
+                                }
+                            }
+                        });
+
+                        if &pal != config.palette() {
+                            if let Some(gb_state) = gb_state.as_mut() {
+                                gb_state.gb.set_dmg_palette(pal.get_palette());
+                            }
+                            config.set_palette(pal);
+                            *last_palette_changed = Some(SystemTime::now());
+                        }
                     });
                 });
             }
             MenuTab::Controller => {
+                ui.heading("Controller Settings");
+
                 ui.horizontal(|ui| {
                     let mut resp = ui.selectable_value(controller_tab, ControllerTab::Keyboard, "Keyboard");
                     resp |= ui.selectable_value(controller_tab, ControllerTab::Gamepad, "Gamepad");

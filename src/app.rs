@@ -120,7 +120,7 @@ impl GameBoyState {
 
         let config = Config::default()
             .set_model(config.model())
-            .set_dmg_palette(config.palette())
+            .set_dmg_palette(config.palette().get_palette())
             .set_boot_rom(config.boot_roms());
 
         let gb = GameBoy::new(rom, backup_ram, &config)?;
@@ -388,11 +388,7 @@ fn gameboy_system(
         }
     };
 
-    let cc = if config.color_correction() {
-        Box::new(CorrectColor) as Box<dyn ColorCorrection>
-    } else {
-        Box::new(RawColor) as Box<dyn ColorCorrection>
-    };
+    let cc = make_color_correction(state.gb.model().is_cgb() && config.color_correction());
 
     if !is_turbo.0 {
         if queue.len() > samples_per_frame * 4 {
