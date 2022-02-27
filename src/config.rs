@@ -39,6 +39,13 @@ pub const PALETTE_LIGHT: Palette = [
     Color::new(0, 80, 56),
 ];
 
+pub const PALETTE_GRAYSCALE: Palette = [
+    Color::new(255, 255, 255),
+    Color::new(170, 170, 170),
+    Color::new(85, 85, 85),
+    Color::new(0, 0, 0),
+];
+
 #[rustfmt::skip]
 const BOOT_ROMS: &[(&str, &[u8])] = &[
     ("DMG", include_bytes!("../assets/sameboy-bootroms/dmg_boot.bin")),
@@ -69,6 +76,7 @@ pub enum PaletteSelect {
     Dmg,
     Pocket,
     Light,
+    Grayscale,
     Custom(Palette),
 }
 
@@ -78,6 +86,7 @@ impl PaletteSelect {
             PaletteSelect::Dmg => &PALETTE_DMG,
             PaletteSelect::Pocket => &PALETTE_POCKET,
             PaletteSelect::Light => &PALETTE_LIGHT,
+            PaletteSelect::Grayscale => &PALETTE_GRAYSCALE,
             PaletteSelect::Custom(pal) => pal,
         }
     }

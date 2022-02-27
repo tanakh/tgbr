@@ -306,12 +306,14 @@ fn menu_system(
                                     PaletteSelect::Dmg => "GameBoy",
                                     PaletteSelect::Pocket => "GameBoy Pocket",
                                     PaletteSelect::Light => "GameBoy Light",
+                                    PaletteSelect::Grayscale => "Grayscale",
                                     PaletteSelect::Custom(_) => "Custom",
                                 })
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(&mut pal, PaletteSelect::Dmg, "GameBoy");
                                     ui.selectable_value(&mut pal, PaletteSelect::Pocket, "GameBoy Pocket");
                                     ui.selectable_value(&mut pal, PaletteSelect::Light, "GameBoy Light");
+                                    ui.selectable_value(&mut pal, PaletteSelect::Grayscale, "Grayscale");
                                     if ui.add(SelectableLabel::new(matches!(pal, PaletteSelect::Custom(_)), "Custom")).clicked() {
                                         pal = PaletteSelect::Custom(pal.get_palette().clone());
                                     }
