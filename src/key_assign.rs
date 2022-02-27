@@ -3,12 +3,16 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum KeyAssign {
+pub struct KeyAssign(pub Vec<MultiKey>);
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MultiKey(pub Vec<SingleKey>);
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SingleKey {
     KeyCode(KeyCode),
     GamepadButton(GamepadButton),
     GamepadAxis(GamepadAxis, GamepadAxisDir),
-    All(Vec<KeyAssign>),
-    Any(Vec<KeyAssign>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,11 +37,103 @@ impl Display for ToStringKey<GamepadButton> {
 }
 
 impl KeyAssign {
+    pub fn and(self, rhs: Self) -> Self {
+        let mut ret = vec![];
+        for l in self.0.into_iter() {
+            for r in rhs.0.iter() {
+                let mut t = l.0.clone();
+                t.append(&mut r.0.clone());
+                ret.push(MultiKey(t));
+            }
+        }
+        Self(ret)
+    }
+
+    pub fn or(mut self, mut rhs: Self) -> Self {
+        self.0.append(&mut rhs.0);
+        self
+    }
+
     pub fn pressed(&self, input_state: &InputState<'_>) -> bool {
+        self.0
+            .iter()
+            .any(|multi_key| multi_key.pressed(input_state))
+    }
+
+    pub fn just_pressed(&self, input_state: &InputState<'_>) -> bool {
+        self.0
+            .iter()
+            .any(|multi_key| multi_key.just_pressed(input_state))
+    }
+
+    pub fn extract_keycode(&self) -> Option<KeyCode> {
+        for MultiKey(mk) in &self.0 {
+            match &mk[..] {
+                [SingleKey::KeyCode(r)] => return Some(*r),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    pub fn insert_keycode(&mut self, kc: KeyCode) {
+        for MultiKey(mk) in self.0.iter_mut() {
+            match &mut mk[..] {
+                [SingleKey::KeyCode(r)] => {
+                    *r = kc;
+                    return;
+                }
+                _ => {}
+            }
+        }
+        self.0.push(MultiKey(vec![SingleKey::KeyCode(kc)]));
+    }
+
+    pub fn extract_gamepad(&self) -> Option<GamepadButton> {
+        for MultiKey(mk) in &self.0 {
+            match &mk[..] {
+                [SingleKey::GamepadButton(r)] => return Some(*r),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    pub fn insert_gamepad(&mut self, button: GamepadButton) {
+        for MultiKey(mk) in self.0.iter_mut() {
+            match &mut mk[..] {
+                [SingleKey::GamepadButton(r)] => {
+                    *r = button;
+                    return;
+                }
+                _ => {}
+            }
+        }
+        self.0
+            .push(MultiKey(vec![SingleKey::GamepadButton(button)]));
+    }
+}
+
+impl MultiKey {
+    fn pressed(&self, input_state: &InputState<'_>) -> bool {
+        self.0
+            .iter()
+            .all(|single_key| single_key.pressed(input_state))
+    }
+
+    fn just_pressed(&self, input_state: &InputState<'_>) -> bool {
+        self.0
+            .iter()
+            .all(|single_key| single_key.just_pressed(input_state))
+    }
+}
+
+impl SingleKey {
+    fn pressed(&self, input_state: &InputState<'_>) -> bool {
         match self {
-            KeyAssign::KeyCode(keycode) => input_state.input_keycode.pressed(*keycode),
-            KeyAssign::GamepadButton(button) => input_state.input_gamepad_button.pressed(*button),
-            KeyAssign::GamepadAxis(axis, dir) => {
+            SingleKey::KeyCode(keycode) => input_state.input_keycode.pressed(*keycode),
+            SingleKey::GamepadButton(button) => input_state.input_gamepad_button.pressed(*button),
+            SingleKey::GamepadAxis(axis, dir) => {
                 input_state
                     .input_gamepad_axis
                     .get(*axis)
@@ -46,132 +142,52 @@ impl KeyAssign {
                         GamepadAxisDir::Neg => r <= -0.5,
                     })
             }
-            KeyAssign::All(ks) => ks.iter().all(|k| k.pressed(input_state)),
-            KeyAssign::Any(ks) => ks.iter().any(|k| k.pressed(input_state)),
         }
     }
 
-    pub fn just_pressed(&self, input_state: &InputState<'_>) -> bool {
+    fn just_pressed(&self, input_state: &InputState<'_>) -> bool {
         match self {
-            KeyAssign::KeyCode(keycode) => input_state.input_keycode.just_pressed(*keycode),
-            KeyAssign::GamepadButton(button) => {
+            SingleKey::KeyCode(keycode) => input_state.input_keycode.just_pressed(*keycode),
+            SingleKey::GamepadButton(button) => {
                 input_state.input_gamepad_button.just_pressed(*button)
             }
-            KeyAssign::All(ks) => {
-                ks.iter().all(|k| k.pressed(input_state))
-                    && ks.iter().any(|k| k.just_pressed(input_state))
-            }
-            KeyAssign::Any(ks) => ks.iter().any(|k| k.just_pressed(input_state)),
-            _ => false,
-        }
-    }
-
-    pub fn extract_keycode(&self) -> Option<KeyCode> {
-        match self {
-            KeyAssign::KeyCode(keycode) => Some(*keycode),
-            KeyAssign::Any(ks) => {
-                for k in ks {
-                    if let Some(keycode) = k.extract_keycode() {
-                        return Some(keycode);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    pub fn insert_keycode(&mut self, kc: KeyCode) {
-        if !self.try_insert_keycode(kc) {
-            *self = KeyAssign::Any(vec![KeyAssign::KeyCode(kc), self.clone()]);
-        }
-    }
-
-    fn try_insert_keycode(&mut self, kc: KeyCode) -> bool {
-        match self {
-            KeyAssign::KeyCode(r) => {
-                *r = kc;
-                true
-            }
-            KeyAssign::Any(ks) => {
-                for k in ks {
-                    if k.try_insert_keycode(kc) {
-                        return true;
-                    }
-                }
+            SingleKey::GamepadAxis(_axis, _dir) => {
+                // TODO
                 false
             }
-            _ => false,
-        }
-    }
-
-    pub fn extract_gamepad(&self) -> Option<GamepadButton> {
-        match self {
-            KeyAssign::GamepadButton(button) => Some(*button),
-            KeyAssign::Any(ks) => {
-                for k in ks {
-                    if let Some(button) = k.extract_gamepad() {
-                        return Some(button);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    pub fn insert_gamepad(&mut self, button: GamepadButton) {
-        if !self.try_insert_gamepad(button) {
-            *self = KeyAssign::Any(vec![KeyAssign::GamepadButton(button), self.clone()]);
-        }
-    }
-
-    fn try_insert_gamepad(&mut self, button: GamepadButton) -> bool {
-        match self {
-            KeyAssign::GamepadButton(r) => {
-                *r = button;
-                true
-            }
-            KeyAssign::Any(ks) => {
-                for k in ks {
-                    if k.try_insert_gamepad(button) {
-                        return true;
-                    }
-                }
-                false
-            }
-            _ => false,
         }
     }
 }
 
+macro_rules! any {
+    ($x:expr, $($xs:expr),* $(,)?) => {
+        [$($xs),*].into_iter().fold($x, |a, b| a.or(b))
+    };
+}
+pub(crate) use any;
+
+macro_rules! all {
+    ($x:expr, $($xs:expr),* $(,)?) => {{
+        [$($xs),*].into_iter().fold($x, |a, b| a.and(b))
+    }};
+}
+pub(crate) use all;
+
 macro_rules! keycode {
     ($code:ident) => {
-        KeyAssign::KeyCode(KeyCode::$code)
+        KeyAssign(vec![MultiKey(vec![SingleKey::KeyCode(KeyCode::$code)])])
     };
 }
 pub(crate) use keycode;
 
 macro_rules! pad_button {
     ($id:literal, $button:ident) => {
-        KeyAssign::GamepadButton(GamepadButton(Gamepad($id), GamepadButtonType::$button))
+        KeyAssign(vec![MultiKey(vec![SingleKey::GamepadButton(
+            GamepadButton(Gamepad($id), GamepadButtonType::$button),
+        )])])
     };
 }
 pub(crate) use pad_button;
-
-macro_rules! any {
-    ($($assign:expr),* $(,)?) => {
-        KeyAssign::Any(vec![$($assign),*])
-    };
-}
-pub(crate) use any;
-
-macro_rules! all {
-    ($($assign:expr),* $(,)?) => {
-        KeyAssign::All(vec![$($assign),*])
-    };
-}
-pub(crate) use all;
 
 pub struct InputState<'a> {
     input_keycode: &'a Input<KeyCode>,

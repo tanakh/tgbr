@@ -109,6 +109,7 @@ enum MenuTab {
     GeneralSetting,
     Graphics,
     Controller,
+    HotKey,
 }
 
 #[derive(PartialEq, Eq)]
@@ -172,7 +173,8 @@ fn menu_system(
                 ui.selectable_value(tab, MenuTab::GeneralSetting, "🔧General Setting");
                 ui.selectable_value(tab, MenuTab::Graphics, "🖼Graphics");
                 ui.selectable_value(tab, MenuTab::Controller, "🎮Controller");
-                if ui.button("↩Quit").clicked() {
+                ui.selectable_value(tab, MenuTab::HotKey, "⌨HotKey");
+                if ui.selectable_label(false, "↩Quit").clicked() {
                     exit.send(AppExit);
                 }
             });
@@ -481,6 +483,9 @@ fn menu_system(
                     *controller_button_ix = 0;
                     config.save().unwrap();
                 }
+            }
+            MenuTab::HotKey => {
+                todo!();
             }
         });
     });
