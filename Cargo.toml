@@ -13,6 +13,7 @@ edition = "2021"
 tgbr-core = { path = "tgbr-core" }
 anyhow = "1.0.55"
 argopt = "0.3.0"
+chrono = "0.4.19"
 ciborium = "0.2.0"
 directories = "4.0.1"
 enum-iterator = "0.7.0"

@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use anyhow::Result;
 use std::path::PathBuf;
 

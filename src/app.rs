@@ -23,7 +23,10 @@ use tgbr_core::{AudioBuffer, Config, FrameBuffer, GameBoy, Input as GameBoyInput
 
 use crate::{
     config::{self, load_config, load_persistent_state},
-    file::{load_backup_ram, load_rom, print_rom_info, save_backup_ram},
+    file::{
+        load_backup_ram, load_rom, load_state_data, print_rom_info, save_backup_ram,
+        save_state_data,
+    },
     hotkey,
     input::gameboy_input_system,
     menu,
@@ -149,6 +152,16 @@ impl GameBoyState {
             frames: 0,
             auto_saved_states: VecDeque::new(),
         })
+    }
+
+    pub fn save_state(&self, slot: usize, config: &config::Config) -> Result<()> {
+        let data = self.gb.save_state();
+        save_state_data(&self.rom_file, slot, &data, config.state_dir())
+    }
+
+    pub fn load_state(&mut self, slot: usize, config: &config::Config) -> Result<()> {
+        let data = load_state_data(&self.rom_file, slot, config.state_dir())?;
+        self.gb.load_state(&data)
     }
 }
 

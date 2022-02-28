@@ -8,7 +8,6 @@ use crate::{
         make_color_correction, AppState, GameBoyState, ShowMessage, UiState, WindowControlEvent,
     },
     config::Config,
-    file::{load_state_data, save_state_data},
     key_assign::*,
     rewinding::AutoSavedState,
 };
@@ -162,14 +161,9 @@ fn process_hotkey(
             }
             HotKey::StateSave => {
                 if let Some(state) = &mut gb_state {
-                    let data = state.gb.save_state();
-                    save_state_data(
-                        &state.rom_file,
-                        ui_state.state_save_slot,
-                        &data,
-                        config.state_dir(),
-                    )
-                    .unwrap();
+                    state
+                        .save_state(ui_state.state_save_slot, config.as_ref())
+                        .unwrap();
                     message_event.send(ShowMessage(format!(
                         "State saved: #{}",
                         ui_state.state_save_slot
@@ -178,15 +172,7 @@ fn process_hotkey(
             }
             HotKey::StateLoad => {
                 if let Some(state) = &mut gb_state {
-                    let res = (|| {
-                        let data = load_state_data(
-                            &state.rom_file,
-                            ui_state.state_save_slot,
-                            config.state_dir(),
-                        )?;
-                        state.gb.load_state(&data)
-                    })();
-                    if let Err(e) = res {
+                    if let Err(e) = state.load_state(ui_state.state_save_slot, config.as_ref()) {
                         message_event.send(ShowMessage("Failed to load state".to_string()));
                         error!("Failed to load state: {}", e);
                     } else {

@@ -3644,6 +3644,7 @@ dependencies = [
  "bevy_egui",
  "bevy_kira_audio",
  "bevy_tiled_camera",
+ "chrono",
  "ciborium",
  "directories",
  "enum-iterator",

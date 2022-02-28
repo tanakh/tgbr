@@ -1,9 +1,9 @@
 use crate::{
-    app::{AppState, FullscreenState, GameBoyState, WindowControlEvent},
+    app::{AppState, FullscreenState, GameBoyState, WindowControlEvent, ShowMessage},
     config::{BootRom, Config, PaletteSelect, PersistentState},
     hotkey::{HotKey, HotKeys},
     input::KeyConfig,
-    key_assign::{MultiKey, SingleKey, ToStringKey},
+    key_assign::{MultiKey, SingleKey, ToStringKey}, file::state_data_date,
 };
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{
@@ -104,6 +104,7 @@ fn menu_event_system(
 #[derive(PartialEq, Eq)]
 enum MenuTab {
     File,
+    State,
     GeneralSetting,
     Graphics,
     Controller,
@@ -147,6 +148,7 @@ fn menu_system(
     mut gb_state: Option<ResMut<GameBoyState>>,
     mut exit: EventWriter<AppExit>,
     mut menu_event: EventWriter<MenuEvent>,
+    mut message_event: EventWriter<ShowMessage>,
     mut window_control_event: EventWriter<WindowControlEvent>,
     key_code_input: Res<Input<KeyCode>>,
     gamepad_button_input: Res<Input<GamepadButton>>,
@@ -173,12 +175,17 @@ fn menu_system(
         egui::SidePanel::left("left_panel").show_inside(ui, |ui| {
             ui.set_width(width / 4.0);
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                ui.selectable_value(tab, MenuTab::File, "📁File");
-                ui.selectable_value(tab, MenuTab::GeneralSetting, "🔧General Setting");
-                ui.selectable_value(tab, MenuTab::Graphics, "🖼Graphics");
-                ui.selectable_value(tab, MenuTab::Controller, "🎮Controller");
-                ui.selectable_value(tab, MenuTab::HotKey, "⌨HotKey");
-                if ui.selectable_label(false, "↩Quit").clicked() {
+                ui.selectable_value(tab, MenuTab::File, "📁 File");
+
+                ui.add_enabled_ui(gb_state.is_some(), |ui| {
+                    ui.selectable_value(tab, MenuTab::State, "💾 State Save/Load");
+                });
+
+                ui.selectable_value(tab, MenuTab::GeneralSetting, "🔧 General Setting");
+                ui.selectable_value(tab, MenuTab::Graphics, "🖼 Graphics");
+                ui.selectable_value(tab, MenuTab::Controller, "🎮 Controller");
+                ui.selectable_value(tab, MenuTab::HotKey, "⌨ HotKey");
+                if ui.selectable_label(false, "↩ Quit").clicked() {
                     exit.send(AppExit);
                 }
             });
@@ -219,6 +226,56 @@ fn menu_system(
                         }
                     });
                 });
+            }
+            MenuTab::State => {
+                ui.heading("State Save / Load");
+
+                if let Some(gb_state) = gb_state.as_mut() {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                        ui.group(|ui| {
+                            ui.label("Slot");
+    
+                            let grid = |ui:&mut egui::Ui| {
+                                for i in 0..10 {
+                                    ui.label(format!("{}", i));
+
+                                    let date = state_data_date(&gb_state.rom_file, i, config.state_dir()).unwrap();
+
+                                    if ui.button( "Save").clicked() {
+                                        gb_state.save_state(i, config.as_ref()).unwrap();
+                                        message_event.send(ShowMessage(format!("State saved: #{}", i)));
+                                        app_state.set(AppState::Running).unwrap();
+                                    }
+                                    ui.add_enabled_ui(date.is_some(), |ui| {
+                                        if ui.button( "Load").clicked() {
+                                            match gb_state.load_state(i, config.as_ref()) {
+                                                Ok(_) => {
+                                                    message_event.send(ShowMessage(format!("State loaded: #{}", i)));
+                                                },
+                                                Err(e) => {
+                                                    message_event.send(ShowMessage("Failed to load state".to_string()));
+                                                    error!("Failed to load state: {}", e);
+                                                },
+                                            }
+                                            app_state.set(AppState::Running).unwrap();
+                                        }
+                                    });
+    
+                                    ui.label(date.map_or_else(|| "---".to_string(), |date| date.format("%Y/%m/%d %H:%M:%S").to_string()));
+                                    ui.end_row();
+                                }
+                            };
+    
+                            egui::Grid::new("key_config")
+                            .num_columns(4)
+                            .spacing([40.0, 4.0])
+                            .striped(true)
+                            .show(ui, grid);
+    
+                        });
+                    });
+                }
+
             }
             MenuTab::GeneralSetting => {
                 ui.heading("General Settings");

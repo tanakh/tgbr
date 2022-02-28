@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail, Result};
+use chrono::prelude::*;
 use log::info;
 use std::{
     fs::{self, File},
@@ -128,6 +129,20 @@ pub fn save_state_data(rom_file: &Path, slot: usize, data: &[u8], state_dir: &Pa
 pub fn load_state_data(rom_file: &Path, slot: usize, state_dir: &Path) -> Result<Vec<u8>> {
     let ret = fs::read(get_state_file_path(rom_file, slot, state_dir)?)?;
     Ok(ret)
+}
+
+pub fn state_data_date(
+    rom_file: &Path,
+    slot: usize,
+    state_dir: &Path,
+) -> Result<Option<DateTime<Local>>> {
+    let path = get_state_file_path(rom_file, slot, state_dir)?;
+    let metadata = fs::metadata(&path);
+    if let Ok(metadata) = metadata {
+        Ok(Some(metadata.modified()?.into()))
+    } else {
+        Ok(None)
+    }
 }
 
 pub fn print_rom_info(info: &[(&str, String)]) {
