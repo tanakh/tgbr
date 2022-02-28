@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        type: string
+      target:
+        type: string
+      toolchain:
+        default: stable
+        type: string
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runs_on }}
+    steps:
+      - name: Build | install dependencies
+        if: inputs.runs_on == "ubuntu-latest"
+        run: sudo apt install -y libasound2-dev libudev-dev libgtk-3-dev
+      
+      # - name: Build | add mingw32 to path
+      #   if: inputs.runs_on == 'windows-2019'
+      #   shell: bash
+      #   run: |
+      #     echo "C:\msys64\mingw32\bin" >> $GITHUB_PATH
+
+      - name: Build | checkout
+        uses: actions/checkout@v2
+
+      - name: Build | install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          target: ${{ inputs.target }}
+          toolchain: ${{ inputs.toolchain }}
+          default: true
+
+      - name: Build | rust-cache
+        uses: Swatinem/rust-cache@v1
+
+      - name: Build | build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target=${{ inputs.target }}
+
+      - name: Build | test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all --release --target=${{ inputs.target }}
