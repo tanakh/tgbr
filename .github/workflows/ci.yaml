@@ -25,22 +25,24 @@ jobs:
         with:
           command: check
 
-  # test:
-  #   name: Test Suite
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout sources
-  #       uses: actions/checkout@v2
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+      - name: Checkout sources
+        uses: actions/checkout@v2
 
-  #     - name: Install stable toolchain
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         profile: minimal
-  #         toolchain: stable
-  #         override: true
+      - name: Install dependencies
+        run: sudo apt install -y libasound2-dev libudev-dev libgtk-3-dev
 
-  #     - name: Run cargo test
-  #       uses: actions-rs/cargo@v1
-  #       with:
-  #         command: test
-  #         args: --all
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all
