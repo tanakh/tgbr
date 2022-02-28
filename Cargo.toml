@@ -7,8 +7,6 @@ name = "tgbr"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 tgbr-core = { path = "tgbr-core" }
 anyhow = "1.0.55"
@@ -32,6 +30,9 @@ bevy_egui = "0.11.1"
 bevy_kira_audio = "0.8.0"
 bevy_tiled_camera = "0.3.0"
 rfd = "0.8.0"
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
 
 [dev-dependencies]
 base64 = "0.13.0"
