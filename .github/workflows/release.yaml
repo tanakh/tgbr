@@ -48,7 +48,6 @@ jobs:
           args: --release --target=${{ matrix.target }}
 
       - name: Post Build | Prepare artifacts
-        if: matrix.os == 'windows-latest'
         run: |
           strip target/${{ matrix.target }}/release/${{ matrix.binary }}
 
