@@ -16,7 +16,7 @@ jobs:
             os: ubuntu-latest
             binary: tgbr
             extension: tar.xz
-          - target: x86_64-pc-windows-gnu
+          - target: x86_64-pc-windows-msvc
             os: windows-latest
             binary: tgbr.exe
             extension: zip
