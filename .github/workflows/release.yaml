@@ -54,5 +54,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v2
         with:
-          name: tgbr-${{ github.event.release.tag_name }}-${{ matrix.target}}.${{ matrix.extension }}
+          name: tgbr-${{ github.ref_name }}-${{ matrix.target}}.${{ matrix.extension }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
