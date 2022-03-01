@@ -35,7 +35,7 @@ jobs:
         with:
           toolchain: stable
           profile: minimal
-          target: ${{ inputs.target }}
+          target: ${{ matrix.target }}
           override: true
 
       - name: Build | rust-cache
@@ -45,7 +45,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target=${{ inputs.target }}
+          args: --release --target=${{ matrix.target }}
 
       - name: Post Build | Prepare artifacts [Windows]
         if: matrix.os == 'windows-latest'
