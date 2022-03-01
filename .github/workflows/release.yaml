@@ -47,7 +47,7 @@ jobs:
           command: build
           args: --release --target=${{ matrix.target }}
 
-      - name: Post Build | Prepare artifacts [Windows]
+      - name: Post Build | Prepare artifacts
         if: matrix.os == 'windows-latest'
         run: |
           strip target/${{ matrix.target }}/release/${{ matrix.binary }}
@@ -55,5 +55,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v2
         with:
-          name: tgbr-${{ matrix.name }}-${{ matrix.target}}.${{ matrix.extension }}
+          name: tgbr-${{ github.event.release.tag_name }}-${{ matrix.target}}.${{ matrix.extension }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
