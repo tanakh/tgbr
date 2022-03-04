@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tgbr-core = { path = "tgbr-core" }
+tgbr-core = { path = "tgbr-core", version = "0.1.0" }
 anyhow = "1.0.55"
 argopt = "0.3.0"
 chrono = "0.4.19"

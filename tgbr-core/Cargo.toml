@@ -2,8 +2,11 @@
 name = "tgbr-core"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Hideyuki Tanaka <tanaka.hideyuki@gmail.com>"]
+license = "MIT"
+description = "GameBoy emulation library"
+repository = "https://github.com/tanakh/tgbr"
+readme = "README.md"
 
 [dependencies]
 ambassador = "0.2.1"
