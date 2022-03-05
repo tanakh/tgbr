@@ -240,6 +240,10 @@ impl Rom {
 
         let ram_size = match header[0x49] {
             0 => 0,
+            1 => {
+                warn!("Unused RAM size $01. Fallback to 8KB");
+                8 * 1024
+            }
             2 => 8 * 1024,
             3 => 32 * 1024,
             4 => 128 * 1024,
