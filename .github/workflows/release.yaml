@@ -61,7 +61,7 @@ jobs:
           strip target/${{ matrix.target }}/release/${{ matrix.binary }}
           mkdir tgbr-${{ github.ref_name }}
           cp target/${{ matrix.target }}/release/${{ matrix.binary }} README.md LICENSE tgbr-${{ github.ref_name }}
-          tar -cJvf ../../../tgbr-${{ matrix.target }}.${{ matrix.extension }} tgbr-${{ github.ref_name }}
+          tar -cJvf tgbr-${{ matrix.target }}.${{ matrix.extension }} tgbr-${{ github.ref_name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v2
