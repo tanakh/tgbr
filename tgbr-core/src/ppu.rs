@@ -619,9 +619,8 @@ impl Ppu {
             }
         }
 
-        // FIXME:
         if !is_cgb_mode {
-            render_objs[0..obj_count].sort();
+            render_objs[0..obj_count].sort_unstable();
         }
 
         for i in 0..obj_count {
