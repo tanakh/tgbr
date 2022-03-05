@@ -52,18 +52,16 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           strip ${{ matrix.binary }}
-          7z a ../../../tgbr-${{ matrix.name }}-${{ matrix.target }}.${{ matrix.extension }} ${{ matrix.binary }}
+          7z a ../../../tgbr-${{ matrix.target }}.${{ matrix.extension }} ${{ matrix.binary }}
           cd -
 
       - name: Post Build | Prepare artifacts [-nix]
         if: matrix.os != 'windows-latest'
         run: |
-          cd target/${{ matrix.target }}/release
-          strip tgbr || true
+          strip target/${{ matrix.target }}/release/${{ matrix.binary }}
           mkdir tgbr-${{ github.ref_name }}
-          mv tgbr ../../../{README.md,LICENSE} tgbr-${{ github.ref_name }}
-          tar -cJvf ../../../tgbr-${{ matrix.name }}-${{ matrix.target }}.${{ matrix.extension }} tgbr-${{ github.ref_name }}
-          cd -
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} README.md LICENSE tgbr-${{ github.ref_name }}
+          tar -cJvf ../../../tgbr-${{ matrix.target }}.${{ matrix.extension }} tgbr-${{ github.ref_name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v2
