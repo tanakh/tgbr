@@ -44,10 +44,13 @@ fn get_state_file_path(rom_file: &Path, slot: usize, state_dir: &Path) -> Result
     Ok(state_dir.join(state_file))
 }
 
-pub fn load_rom(file: &Path) -> Result<Rom> {
-    let extension = file.extension().and_then(|e| e.to_str());
+fn extension_as_string(path: &Path) -> Option<String> {
+    path.extension()
+        .and_then(|e| e.to_str().map(|s| s.to_lowercase()))
+}
 
-    match extension {
+pub fn load_rom(file: &Path) -> Result<Rom> {
+    match extension_as_string(file).as_deref() {
         Some("zip") => {
             let mut archive = zip::ZipArchive::new(File::open(file)?)?;
             let mut found = vec![];
@@ -58,7 +61,7 @@ pub fn load_rom(file: &Path) -> Result<Rom> {
                     None => continue,
                 };
 
-                if let Some("gb" | "gbc") = path.extension().and_then(|e| e.to_str()) {
+                if let Some("gb" | "gbc") = extension_as_string(&path).as_deref() {
                     found.push(i)
                 }
             }
