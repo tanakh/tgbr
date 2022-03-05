@@ -1,9 +1,10 @@
 use crate::{
-    app::{AppState, FullscreenState, GameBoyState, WindowControlEvent, ShowMessage},
+    app::{AppState, FullscreenState, GameBoyState, ShowMessage, WindowControlEvent},
     config::{BootRom, Config, PaletteSelect, PersistentState},
+    file::state_data_date,
     hotkey::{HotKey, HotKeys},
     input::KeyConfig,
-    key_assign::{MultiKey, SingleKey, ToStringKey}, file::state_data_date,
+    key_assign::{MultiKey, SingleKey, ToStringKey},
 };
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{
@@ -237,7 +238,7 @@ fn menu_system(
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                         ui.group(|ui| {
                             ui.label("Slot");
-    
+
                             let grid = |ui:&mut egui::Ui| {
                                 for i in 0..10 {
                                     ui.label(format!("{}", i));
@@ -263,18 +264,18 @@ fn menu_system(
                                             app_state.set(AppState::Running).unwrap();
                                         }
                                     });
-    
+
                                     ui.label(date.map_or_else(|| "---".to_string(), |date| date.format("%Y/%m/%d %H:%M:%S").to_string()));
                                     ui.end_row();
                                 }
                             };
-    
+
                             egui::Grid::new("key_config")
                             .num_columns(4)
                             .spacing([40.0, 4.0])
                             .striped(true)
                             .show(ui, grid);
-    
+
                         });
                     });
                 }
@@ -408,7 +409,7 @@ fn menu_system(
                             for i in (0..4).rev() {
                                 let mut col = [cols[i].r, cols[i].g, cols[i].b];
                                 ui.color_edit_button_srgb(&mut col).changed();
-                                
+
                                 if let PaletteSelect::Custom(r) = &mut pal {
                                     r[i] = tgbr_core::Color::new(col[0], col[1], col[2]);
                                 }
