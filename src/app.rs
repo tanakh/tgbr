@@ -33,7 +33,7 @@ use crate::{
     rewinding::{self, AutoSavedState},
 };
 
-pub fn main(boot_rom: Option<PathBuf>, rom_file: Option<PathBuf>) -> Result<()> {
+pub fn main(rom_file: Option<PathBuf>) -> Result<()> {
     let config = load_config()?;
 
     let mut app = App::new();
@@ -41,6 +41,8 @@ pub fn main(boot_rom: Option<PathBuf>, rom_file: Option<PathBuf>) -> Result<()> 
         title: "TGB-R".to_string(),
         resizable: false,
         vsync: true,
+        width: menu::MENU_WIDTH as f32,
+        height: menu::MENU_HEIGHT as f32,
         ..Default::default()
     })
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
@@ -68,7 +70,9 @@ pub fn main(boot_rom: Option<PathBuf>, rom_file: Option<PathBuf>) -> Result<()> 
     .add_system(window_control_event)
     .insert_resource(LastClicked(0.0))
     .add_system(process_double_click)
-    .add_startup_system(setup);
+    .add_startup_system(setup)
+    .add_startup_stage("single-startup", SystemStage::single_threaded())
+    .add_startup_system_to_stage("single-startup", set_window_icon);
 
     if let Some(rom_file) = rom_file {
         let gb = GameBoyState::new(rom_file, &config)?;
@@ -112,6 +116,35 @@ fn setup(
         .insert(fonts.add(pixel_font))
         .insert(PixelFont);
 }
+
+#[cfg(target_os = "windows")]
+fn set_window_icon(windows: Res<bevy::winit::WinitWindows>) {
+    use winit::window::Icon;
+
+    const ICON_DATA: &[u8] = include_bytes!("../assets/tgbr.ico");
+    const ICON_WIDTH: u32 = 64;
+    const ICON_HEIGHT: u32 = 64;
+
+    let primary = windows
+        .get_window(bevy::window::WindowId::primary())
+        .unwrap();
+
+    let icon_rgba = image::load_from_memory_with_format(ICON_DATA, image::ImageFormat::Ico)
+        .unwrap()
+        .resize(
+            ICON_WIDTH,
+            ICON_HEIGHT,
+            image::imageops::FilterType::Lanczos3,
+        )
+        .into_rgba8()
+        .into_raw();
+
+    let icon = Icon::from_rgba(icon_rgba, ICON_WIDTH, ICON_HEIGHT).unwrap();
+    primary.set_window_icon(Some(icon));
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_window_icon() {}
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum AppState {

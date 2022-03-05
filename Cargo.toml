@@ -1,11 +1,17 @@
 [workspace]
-resolver = "2"
 members = ["tgbr-core"]
 
 [package]
 name = "tgbr"
 version = "0.1.0"
 edition = "2021"
+authors = ["Hideyuki Tanaka <tanaka.hideyuki@gmail.com>"]
+license = "MIT"
+description = "GameBoy emulator"
+repository = "https://github.com/tanakh/tgbr"
+readme = "README.md"
+categories = ["emulators"]
+keywords = ["emulators", "gameboy"]
 
 [dependencies]
 tgbr-core = { path = "tgbr-core", version = "0.1.0" }
@@ -16,6 +22,7 @@ ciborium = "0.2.0"
 directories = "4.0.1"
 enum-iterator = "0.7.0"
 env_logger = "0.9.0"
+image = { version = "0.24.1", default-features = false, features = ["ico"] }
 log = "0.4.14"
 prettytable-rs = "0.8.0"
 scopeguard = "1.1.0"
@@ -30,6 +37,7 @@ bevy_egui = "0.11.1"
 bevy_kira_audio = "0.8.0"
 bevy_tiled_camera = "0.3.0"
 rfd = "0.8.0"
+winit = "0.26.1"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

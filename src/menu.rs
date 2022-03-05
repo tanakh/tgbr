@@ -14,6 +14,9 @@ use enum_iterator::IntoEnumIterator;
 use std::{path::PathBuf, time::SystemTime};
 use tgbr_core::Model;
 
+pub const MENU_WIDTH: usize = 1024;
+pub const MENU_HEIGHT: usize = 576;
+
 pub struct MenuPlugin;
 
 pub enum MenuEvent {
@@ -41,7 +44,7 @@ fn menu_setup(
 ) {
     if !fullscreen_state.0 {
         let window = windows.get_primary_mut().unwrap();
-        window.set_resolution(960.0, 540.0);
+        window.set_resolution(MENU_WIDTH as f32, MENU_HEIGHT as f32);
     }
 
     let mut fonts = egui::FontDefinitions::default();
