@@ -9,7 +9,7 @@ use crate::{
     util::{pack, trait_alias},
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct SerialTransfer {
     buf: u8,
     recv_buf: Option<u8>,
@@ -24,18 +24,6 @@ pub struct SerialTransfer {
 trait_alias!(pub trait Context = context::InterruptFlag);
 
 impl SerialTransfer {
-    pub fn new() -> Self {
-        Self {
-            buf: 0,
-            recv_buf: None,
-            transfer_progress: false,
-            use_internal_clock: false,
-            transfer_timer: 0,
-            transfer_pos: 0,
-            link_cable: None,
-        }
-    }
-
     pub fn set_link_cable(&mut self, link_cable: Option<Box<dyn LinkCable + Send + Sync>>) {
         self.link_cable = link_cable;
     }

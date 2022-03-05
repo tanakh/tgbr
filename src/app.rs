@@ -181,7 +181,7 @@ impl GameBoyState {
         Ok(Self {
             gb,
             rom_file: rom_file.as_ref().to_owned(),
-            save_dir: save_dir,
+            save_dir,
             frames: 0,
             auto_saved_states: VecDeque::new(),
         })
@@ -244,7 +244,7 @@ struct AudioStreamQueue {
 impl AudioStream for AudioStreamQueue {
     fn next(&mut self, _: f64) -> Frame {
         let mut buffer = self.queue.lock().unwrap();
-        buffer.pop_front().unwrap_or_else(|| Frame {
+        buffer.pop_front().unwrap_or(Frame {
             left: 0.0,
             right: 0.0,
         })
@@ -506,7 +506,7 @@ struct RawColor;
 
 impl ColorCorrection for RawColor {
     fn translate(&self, c: &tgbr_core::Color) -> tgbr_core::Color {
-        c.clone()
+        *c
     }
 }
 
@@ -552,7 +552,6 @@ fn setup_fps_system(mut commands: Commands, pixel_font: Query<&Handle<Font>, Wit
                     font: pixel_font.clone(),
                     font_size: 24.0,
                     color: Color::WHITE,
-                    ..Default::default()
                 },
                 TextAlignment::default(),
             ),
@@ -584,6 +583,7 @@ fn exit_fps_system(
     commands.entity(fps_text_bg.single()).despawn();
 }
 
+#[allow(clippy::type_complexity)]
 fn fps_system(
     config: Res<config::Config>,
     diagnostics: ResMut<Diagnostics>,
@@ -658,7 +658,6 @@ fn message_event_system(
                         font: pixel_font.clone(),
                         font_size: 12.0,
                         color: Color::WHITE,
-                        ..Default::default()
                     },
                     TextAlignment::default(),
                 ),

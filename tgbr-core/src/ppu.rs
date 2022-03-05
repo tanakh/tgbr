@@ -90,7 +90,7 @@ impl Ppu {
             line_buffer: vec![0; SCREEN_WIDTH as usize],
             line_buffer_col: vec![0; SCREEN_WIDTH as usize],
             line_buffer_attr: vec![0; SCREEN_WIDTH as usize],
-            dmg_palette: dmg_palette.clone(),
+            dmg_palette: *dmg_palette,
             ..Default::default()
         }
     }
@@ -100,7 +100,7 @@ impl Ppu {
     }
 
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
-        self.dmg_palette = palette.clone();
+        self.dmg_palette = *palette;
     }
 
     pub fn frame_buffer(&self) -> &FrameBuffer {
@@ -623,8 +623,7 @@ impl Ppu {
             render_objs[0..obj_count].sort_unstable();
         }
 
-        for i in 0..obj_count {
-            let i = render_objs[i].1;
+        for &(_, i) in &render_objs[0..obj_count] {
             let r = &oam[i * 4..(i + 1) * 4];
             let y = r[0];
             let x = r[1];

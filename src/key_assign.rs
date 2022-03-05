@@ -155,9 +155,8 @@ impl KeyAssign {
 
     pub fn extract_keycode(&self) -> Option<KeyCode> {
         for MultiKey(mk) in &self.0 {
-            match &mk[..] {
-                [SingleKey::KeyCode(r)] => return Some(*r),
-                _ => {}
+            if let [SingleKey::KeyCode(r)] = &mk[..] {
+                return Some(*r);
             }
         }
         None
@@ -165,12 +164,9 @@ impl KeyAssign {
 
     pub fn insert_keycode(&mut self, kc: KeyCode) {
         for MultiKey(mk) in self.0.iter_mut() {
-            match &mut mk[..] {
-                [SingleKey::KeyCode(r)] => {
-                    *r = kc;
-                    return;
-                }
-                _ => {}
+            if let [SingleKey::KeyCode(r)] = &mut mk[..] {
+                *r = kc;
+                return;
             }
         }
         self.0.push(MultiKey(vec![SingleKey::KeyCode(kc)]));
@@ -178,9 +174,8 @@ impl KeyAssign {
 
     pub fn extract_gamepad(&self) -> Option<GamepadButton> {
         for MultiKey(mk) in &self.0 {
-            match &mk[..] {
-                [SingleKey::GamepadButton(r)] => return Some(*r),
-                _ => {}
+            if let [SingleKey::GamepadButton(r)] = &mk[..] {
+                return Some(*r);
             }
         }
         None
@@ -188,12 +183,9 @@ impl KeyAssign {
 
     pub fn insert_gamepad(&mut self, button: GamepadButton) {
         for MultiKey(mk) in self.0.iter_mut() {
-            match &mut mk[..] {
-                [SingleKey::GamepadButton(r)] => {
-                    *r = button;
-                    return;
-                }
-                _ => {}
+            if let [SingleKey::GamepadButton(r)] = &mut mk[..] {
+                *r = button;
+                return;
             }
         }
         self.0

@@ -134,7 +134,7 @@ impl Bus {
                     self.mbc.read(ctx, addr)
                 }
             }
-            0x0100..=0x7FFF => self.mbc.read(ctx, addr),
+            0x0900..=0x7FFF => self.mbc.read(ctx, addr),
             0x8000..=0x9FFF => {
                 ctx.vram()[((addr & 0x1FFF) | (self.vram_bank as u16 * 0x2000)) as usize]
             }
@@ -342,16 +342,14 @@ impl Bus {
                     if self.hdma.enabled_hblank_dma {
                         assert!(!v[7], "General DMA start on doing HBLANK DMA");
                         self.hdma.enabled_hblank_dma = false;
+                    } else if v[7] {
+                        // HBlank DMA
+                        self.hdma.enabled_hblank_dma = true;
+                        self.hdma.length = v[0..=6].load();
                     } else {
-                        if v[7] {
-                            // HBlank DMA
-                            self.hdma.enabled_hblank_dma = true;
-                            self.hdma.length = v[0..=6].load();
-                        } else {
-                            // General Purpose DMA
-                            self.hdma.enabled_general_dma = true;
-                            self.hdma.length = v[0..=6].load();
-                        }
+                        // General Purpose DMA
+                        self.hdma.enabled_general_dma = true;
+                        self.hdma.length = v[0..=6].load();
                     }
                 } else {
                     warn!("HDMA5 write on non-CGB");
@@ -456,7 +454,7 @@ impl Bus {
             log::trace!("HDMA: ${:04X} -> ${:04X}", self.hdma.source, self.hdma.dest);
             for i in 0..16 {
                 let dat = self.read_(ctx, self.hdma.source + i);
-                self.write(ctx, 0x8000 | self.hdma.dest + i, dat);
+                self.write(ctx, 0x8000 | (self.hdma.dest + i), dat);
             }
             self.hdma.source = self.hdma.source.wrapping_add(16);
             self.hdma.dest = self.hdma.dest.wrapping_add(16);

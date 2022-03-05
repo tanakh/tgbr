@@ -47,11 +47,11 @@ pub struct BootRoms {
 impl BootRoms {
     pub fn get(&self, model: Model) -> Option<&[u8]> {
         match model {
-            Model::Dmg => self.dmg.as_ref().map(|r| r.as_slice()),
-            Model::Cgb => self.cgb.as_ref().map(|r| r.as_slice()),
-            Model::Sgb => self.sgb.as_ref().map(|r| r.as_slice()),
-            Model::Sgb2 => self.sgb2.as_ref().map(|r| r.as_slice()),
-            Model::Agb => self.agb.as_ref().map(|r| r.as_slice()),
+            Model::Dmg => self.dmg.as_deref(),
+            Model::Cgb => self.cgb.as_deref(),
+            Model::Sgb => self.sgb.as_deref(),
+            Model::Sgb2 => self.sgb2.as_deref(),
+            Model::Agb => self.agb.as_deref(),
             Model::Auto => panic!(),
         }
     }
@@ -73,7 +73,7 @@ impl Config {
         self
     }
     pub fn set_dmg_palette(mut self, palette: &[Color; 4]) -> Self {
-        self.dmg_palette = palette.clone();
+        self.dmg_palette = *palette;
         self
     }
     pub fn set_boot_rom(mut self, boot_roms: BootRoms) -> Self {

@@ -89,7 +89,7 @@ impl super::MbcTrait for Mbc3 {
             0x4000..=0x5FFF => {
                 if data <= 3 {
                     self.ram_bank_or_timer = RamBankOrTimer::RamBank(data);
-                } else if 8 <= data && data <= 0xC {
+                } else if (8..=0xC).contains(&data) {
                     self.ram_bank_or_timer = RamBankOrTimer::Timer(data);
                 } else {
                     warn!("MBC3: invalid RAM bank or timer select: ${data:02}");

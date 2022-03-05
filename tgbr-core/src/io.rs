@@ -30,8 +30,8 @@ pub struct Io {
     input: Input,
 }
 
-impl Io {
-    pub fn new() -> Self {
+impl Default for Io {
+    fn default() -> Self {
         Self {
             select_action_buttons: true,
             select_direction_buttons: true,
@@ -43,9 +43,15 @@ impl Io {
             prev_timer_clock: false,
             timer_reload: false,
             timer_reloaded: false,
-            serial: SerialTransfer::new(),
+            serial: SerialTransfer::default(),
             input: Input::default(),
         }
+    }
+}
+
+impl Io {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn tick(&mut self, ctx: &mut impl Context) {

@@ -55,7 +55,7 @@ impl GameBoy {
             ctx: Context::new(model, rom, &boot_rom, backup_ram, &config.dmg_palette),
         };
 
-        if !boot_rom.is_some() {
+        if boot_rom.is_none() {
             // Do not use boot ROM
             // Set the values of the state after the boot ROM
             ret.setup_initial_state();
@@ -109,7 +109,7 @@ impl GameBoy {
 
         self.ctx = Context::new(model, rom, &boot_rom, backup_ram, dmg_palette);
 
-        if !boot_rom.is_some() {
+        if boot_rom.is_none() {
             self.setup_initial_state();
         }
     }

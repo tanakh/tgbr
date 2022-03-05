@@ -58,11 +58,8 @@ pub fn load_rom(file: &Path) -> Result<Rom> {
                     None => continue,
                 };
 
-                let extension = path.extension().and_then(|e| e.to_str());
-
-                match extension {
-                    Some("gb" | "gbc") => found.push(i),
-                    _ => {}
+                if let Some("gb" | "gbc") = path.extension().and_then(|e| e.to_str()) {
+                    found.push(i)
                 }
             }
 

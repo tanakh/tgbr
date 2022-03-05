@@ -178,10 +178,7 @@ impl CartridgeType {
     }
 
     pub fn has_internal_ram(&self) -> bool {
-        match &self.mbc {
-            Some(Mbc::Mbc2) => true,
-            _ => false,
-        }
+        matches!(&self.mbc, Some(Mbc::Mbc2))
     }
 }
 
@@ -265,8 +262,8 @@ impl Rom {
         let header_checksum = header[0x4d];
 
         let mut header_checksum_calc = 0_u8;
-        for i in 0x34..=0x4c {
-            header_checksum_calc = header_checksum_calc.wrapping_sub(header[i]).wrapping_sub(1);
+        for &byte in &header[0x34..=0x4c] {
+            header_checksum_calc = header_checksum_calc.wrapping_sub(byte).wrapping_sub(1);
         }
 
         if header_checksum_calc != header_checksum {
@@ -276,9 +273,9 @@ impl Rom {
         let global_checksum = (header[0x4e] as u16) << 8 | header[0x4f] as u16;
 
         let mut global_checksum_calc = 0_u16;
-        for i in 0..bytes.len() {
+        for (i, &byte) in bytes.iter().enumerate() {
             if !(0x14e..=0x14f).contains(&i) {
-                global_checksum_calc = global_checksum_calc.wrapping_add(bytes[i] as u16);
+                global_checksum_calc = global_checksum_calc.wrapping_add(byte as u16);
             }
         }
 

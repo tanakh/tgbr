@@ -143,6 +143,7 @@ impl Default for MenuState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn menu_system(
     mut config: ResMut<Config>,
     persistent_state: Res<PersistentState>,
@@ -399,12 +400,12 @@ fn menu_system(
                                     ui.selectable_value(&mut pal, PaletteSelect::Light, "GameBoy Light");
                                     ui.selectable_value(&mut pal, PaletteSelect::Grayscale, "Grayscale");
                                     if ui.add(SelectableLabel::new(matches!(pal, PaletteSelect::Custom(_)), "Custom")).clicked() {
-                                        pal = PaletteSelect::Custom(pal.get_palette().clone());
+                                        pal = PaletteSelect::Custom(*pal.get_palette());
                                     }
                                 }
                             );
 
-                            let cols = pal.get_palette().clone();
+                            let cols = *pal.get_palette();
 
                             for i in (0..4).rev() {
                                 let mut col = [cols[i].r, cols[i].g, cols[i].b];
@@ -724,11 +725,9 @@ fn file_field(
                 ret = true;
             }
         }
-        if has_clear {
-            if ui.button("Clear").clicked() {
-                *path = None;
-                ret = true;
-            }
+        if has_clear && ui.button("Clear").clicked() {
+            *path = None;
+            ret = true;
         }
     });
     ui.indent("", |ui| {

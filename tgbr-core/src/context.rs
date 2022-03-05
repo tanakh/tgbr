@@ -70,10 +70,7 @@ pub enum RunningMode {
 
 impl RunningMode {
     pub fn is_cgb(&self) -> bool {
-        match self {
-            RunningMode::Cgb => true,
-            _ => false,
-        }
+        matches!(self, RunningMode::Cgb)
     }
 }
 
@@ -261,10 +258,10 @@ impl Rom for InnerContext1 {
 
 impl Ppu for InnerContext1 {
     fn read_ppu(&mut self, addr: u16) -> u8 {
-        self.ppu.read(&mut self.inner, addr)
+        self.ppu.read(&self.inner, addr)
     }
     fn write_ppu(&mut self, addr: u16, data: u8) {
-        self.ppu.write(&mut self.inner, addr, data)
+        self.ppu.write(&self.inner, addr, data)
     }
     fn mode(&self) -> crate::ppu::Mode {
         self.ppu.mode()

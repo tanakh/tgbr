@@ -139,16 +139,14 @@ impl Apu {
 
         let mut output = [0, 0];
 
-        for i in 0..2 {
-            for j in 0..4 {
+        for (i, out) in output.iter_mut().enumerate() {
+            for (j, ch_out) in ch_output.iter().enumerate() {
                 if self.channel_ctrl[i].output_ch[j] {
-                    output[i] += ch_output[j];
+                    *out += *ch_out;
                 }
             }
-            output[i] *= self.channel_ctrl[i].volume as i16 + 1;
+            *out *= self.channel_ctrl[i].volume as i16 + 1;
         }
-
-        // TODO: high-pass filter
 
         AudioSample::new(output[0], output[1])
     }
@@ -599,7 +597,7 @@ struct Wave {
 impl Wave {
     fn reset(&mut self) {
         // Powering APU shouldn't affect wave
-        let t = self.ram.clone();
+        let t = self.ram;
         *self = Default::default();
         self.ram = t;
     }

@@ -69,7 +69,7 @@ fn enter_rewinding_system(
 
     commands
         .spawn_bundle(SpriteBundle {
-            texture: preview_image.clone(),
+            texture: preview_image,
             transform: Transform::from_xyz(0.0, 0.0, 1.0),
             ..Default::default()
         })
@@ -89,7 +89,7 @@ fn enter_rewinding_system(
         .insert(Preview);
 
     for i in 0..4 {
-        if state_num - 1 >= i {
+        if state_num > i {
             let thumbnail = images.add(
                 gb_state.auto_saved_states[state_num - 1 - i]
                     .thumbnail
@@ -133,6 +133,7 @@ fn exit_rewinding_system(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewinding_system(
     mut commands: Commands,
     mut gb_state: ResMut<GameBoyState>,
