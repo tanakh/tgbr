@@ -124,19 +124,15 @@ fn blargg_check_fn(output: &[u8]) -> Option<Result<()>> {
     const EXPECTED: &[u8] = b"Passed\n";
     const FAILED: &[u8] = b"FAILED\n";
 
-    if output.len() >= EXPECTED.len() {
-        if &output[output.len() - EXPECTED.len()..] == EXPECTED {
-            return Some(Ok(()));
-        }
+    if output.len() >= EXPECTED.len() && &output[output.len() - EXPECTED.len()..] == EXPECTED {
+        return Some(Ok(()));
     }
 
-    if output.len() >= FAILED.len() {
-        if &output[output.len() - FAILED.len()..] == FAILED {
-            return Some(Err(anyhow::anyhow!(
-                "Test failed: {}",
-                String::from_utf8_lossy(output)
-            )));
-        }
+    if output.len() >= FAILED.len() && &output[output.len() - FAILED.len()..] == FAILED {
+        return Some(Err(anyhow::anyhow!(
+            "Test failed: {}",
+            String::from_utf8_lossy(output)
+        )));
     }
 
     None
