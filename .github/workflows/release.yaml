@@ -53,7 +53,8 @@ jobs:
           cd target/${{ matrix.target }}/release
           strip ${{ matrix.binary }}
           cd -
-          7z a tgbr-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.extension }} target/${{ matrix.target }}/release/${{ matrix.binary }} README.md LICENSE
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} .
+          7z a tgbr-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.extension }} ${{ matrix.binary }} README.md LICENSE
 
       - name: Post Build | Prepare artifacts [-nix]
         if: matrix.os != 'windows-latest'
