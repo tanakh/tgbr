@@ -26,7 +26,7 @@ pub trait MbcTrait {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct NullMbc;
+pub struct NullMbc {}
 
 impl NullMbc {
     fn new(rom: &Rom) -> Self {
@@ -35,7 +35,7 @@ impl NullMbc {
             32 * 1024,
             "ROM only cartridge should be 32KiB"
         );
-        Self
+        Self {}
     }
 }
 
