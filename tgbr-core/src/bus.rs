@@ -381,7 +381,11 @@ impl Bus {
         &mut self.io
     }
 
-    pub fn mbc(&mut self) -> &mut Mbc {
+    pub fn mbc(&self) -> &Mbc {
+        &self.mbc
+    }
+
+    pub fn mbc_mut(&mut self) -> &mut Mbc {
         &mut self.mbc
     }
 

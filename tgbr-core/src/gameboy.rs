@@ -147,7 +147,7 @@ impl GameBoy {
         self.ctx.inner.inner.apu.audio_buffer()
     }
 
-    pub fn backup_ram(&mut self) -> Option<Vec<u8>> {
+    pub fn backup_ram(&self) -> Option<Vec<u8>> {
         use crate::mbc::MbcTrait;
         let external_ram = self.ctx.backup_ram();
         let internal_ram = self.ctx.inner.bus.mbc().internal_ram();
