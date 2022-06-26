@@ -64,6 +64,9 @@ pub struct Ppu {
     line_buffer_attr: Vec<u8>,
 
     #[serde(skip)]
+    render_graphics: bool,
+
+    #[serde(skip)]
     frame_buffer: FrameBuffer,
 }
 
@@ -101,6 +104,10 @@ impl Ppu {
 
     pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
         self.dmg_palette = *palette;
+    }
+
+    pub fn set_render_graphics(&mut self, render_graphics: bool) {
+        self.render_graphics = render_graphics;
     }
 
     pub fn frame_buffer(&self) -> &FrameBuffer {
@@ -463,6 +470,10 @@ const Z_ORD_NULL: u8 = 0;
 
 impl Ppu {
     fn render_line(&mut self, ctx: &impl Context) {
+        if !self.render_graphics {
+            return;
+        }
+
         self.line_buffer.fill(0);
         self.line_buffer_col.fill(0);
         self.line_buffer_attr.fill(Z_ORD_NULL);

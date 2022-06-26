@@ -69,7 +69,7 @@ fn test_serial_output_test_rom(
 
     let mut frames = 0;
     while completed.lock().unwrap().is_none() && frames < 1200 {
-        gb.exec_frame();
+        gb.exec_frame(false);
         frames += 1;
     }
 

@@ -118,10 +118,11 @@ impl GameBoy {
         }
     }
 
-    pub fn exec_frame(&mut self) {
+    pub fn exec_frame(&mut self, render_graphics: bool) {
         use context::*;
 
         self.ctx.apu_mut().audio_buffer_mut().buf.clear();
+        self.ctx.ppu_mut().set_render_graphics(render_graphics);
 
         let start_frame = self.ctx.inner.inner.ppu.frame();
         while start_frame == self.ctx.inner.inner.ppu.frame() {

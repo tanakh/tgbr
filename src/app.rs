@@ -414,7 +414,7 @@ fn gameboy_system(
         }
 
         let mut exec_frame = |queue: &mut VecDeque<Frame>| {
-            state.gb.exec_frame();
+            state.gb.exec_frame(true);
             if state.frames % config.auto_state_save_freq() == 0 {
                 let saved_state = AutoSavedState {
                     data: state.gb.save_state(),
@@ -441,8 +441,8 @@ fn gameboy_system(
         let image = images.get_mut(&screen.0).unwrap();
         cc.copy_frame_buffer(&mut image.data, fb);
     } else {
-        for _ in 0..config.frame_skip_on_turbo() {
-            state.gb.exec_frame();
+        for i in 0..config.frame_skip_on_turbo() {
+            state.gb.exec_frame(i == 0);
             if queue.len() < samples_per_frame * 2 {
                 push_audio_queue(&mut *queue, state.gb.audio_buffer());
             }

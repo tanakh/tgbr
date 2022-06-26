@@ -1,7 +1,7 @@
 use ambassador::{delegatable_trait, Delegate};
 use serde::{Deserialize, Serialize};
 
-use crate::{interface::Color, mbc::create_mbc, util::to_si_bytesize};
+use crate::{interface::Color, mbc::create_mbc, ppu, util::to_si_bytesize};
 
 #[delegatable_trait]
 pub trait Bus {
@@ -36,6 +36,8 @@ pub trait ExternalRam {
 
 #[delegatable_trait]
 pub trait Ppu {
+    fn ppu(&self) -> &ppu::Ppu;
+    fn ppu_mut(&mut self) -> &mut ppu::Ppu;
     fn read_ppu(&mut self, addr: u16) -> u8;
     fn write_ppu(&mut self, addr: u16, data: u8);
     fn mode(&self) -> crate::ppu::Mode;
@@ -257,6 +259,13 @@ impl Rom for InnerContext1 {
 }
 
 impl Ppu for InnerContext1 {
+    fn ppu(&self) -> &crate::ppu::Ppu {
+        &self.ppu
+    }
+    fn ppu_mut(&mut self) -> &mut crate::ppu::Ppu {
+        &mut self.ppu
+    }
+
     fn read_ppu(&mut self, addr: u16) -> u8 {
         self.ppu.read(&self.inner, addr)
     }
