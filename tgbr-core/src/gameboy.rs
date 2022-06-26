@@ -96,6 +96,10 @@ impl GameBoy {
         }
     }
 
+    pub fn info(&self) -> Vec<(&str, String)> {
+        self.ctx.inner.inner.rom.info()
+    }
+
     pub fn reset(&mut self) {
         use context::*;
 
