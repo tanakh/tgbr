@@ -1,7 +1,7 @@
 use ambassador::{delegatable_trait, Delegate};
 use serde::{Deserialize, Serialize};
 
-use crate::{interface::Color, mbc::create_mbc, ppu, util::to_si_bytesize};
+use crate::{apu, config, interface::Color, mbc::create_mbc, ppu, rom, util::to_si_bytesize};
 
 #[delegatable_trait]
 pub trait Bus {
@@ -40,24 +40,24 @@ pub trait Ppu {
     fn ppu_mut(&mut self) -> &mut ppu::Ppu;
     fn read_ppu(&mut self, addr: u16) -> u8;
     fn write_ppu(&mut self, addr: u16, data: u8);
-    fn mode(&self) -> crate::ppu::Mode;
+    fn mode(&self) -> ppu::Mode;
 }
 
 #[delegatable_trait]
 pub trait Apu {
-    fn apu(&self) -> &crate::apu::Apu;
-    fn apu_mut(&mut self) -> &mut crate::apu::Apu;
+    fn apu(&self) -> &apu::Apu;
+    fn apu_mut(&mut self) -> &mut apu::Apu;
 }
 
 #[delegatable_trait]
 pub trait Rom {
-    fn rom(&self) -> &crate::rom::Rom;
-    fn rom_mut(&mut self) -> &mut crate::rom::Rom;
+    fn rom(&self) -> &rom::Rom;
+    fn rom_mut(&mut self) -> &mut rom::Rom;
 }
 
 #[delegatable_trait]
 pub trait Model {
-    fn model(&self) -> crate::config::Model;
+    fn model(&self) -> config::Model;
     fn running_mode(&self) -> RunningMode;
     fn set_running_mode(&mut self, mode: RunningMode);
 }
