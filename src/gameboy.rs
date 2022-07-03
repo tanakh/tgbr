@@ -11,7 +11,7 @@ use crate::{
 #[derive(Serialize, Deserialize)]
 pub struct GameBoy {
     rom_hash: [u8; 32],
-    #[serde(flatten)]
+    // #[serde(flatten)]
     ctx: context::Context,
 }
 

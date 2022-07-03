@@ -186,7 +186,7 @@ impl Context {
 #[delegate(InterruptFlag, target = "inner")]
 pub struct Context {
     pub cpu: crate::cpu::Cpu,
-    #[serde(flatten)]
+    // #[serde(flatten)]
     pub inner: InnerContext0,
 }
 
@@ -201,7 +201,7 @@ pub struct Context {
 #[delegate(InterruptFlag, target = "inner")]
 pub struct InnerContext0 {
     pub bus: crate::bus::Bus,
-    #[serde(flatten)]
+    // #[serde(flatten)]
     pub inner: InnerContext1,
 }
 
@@ -245,7 +245,7 @@ pub struct InnerContext1 {
     pub rom: crate::rom::Rom,
     pub ppu: crate::ppu::Ppu,
     pub apu: crate::apu::Apu,
-    #[serde(flatten)]
+    // #[serde(flatten)]
     pub inner: InnerContext2,
 }
 
