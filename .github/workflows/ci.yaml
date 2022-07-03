@@ -43,7 +43,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --workspace --locked --all-targets --all-features -- -D clippy::all
+          args: --workspace --all-targets --all-features -- -D clippy::all
 
   cargo_check:
     name: Compile
@@ -70,7 +70,7 @@ jobs:
           override: true
 
       - name: Build | Check
-        run: cargo check --workspace --locked --target=${{ matrix.target }}
+        run: cargo check --workspace --target=${{ matrix.target }}
 
   test:
     name: Test Suite
@@ -91,4 +91,4 @@ jobs:
           override: true
 
       - name: Build | Test
-        run: cargo test --workspace --locked --release
+        run: cargo test --workspace --release
