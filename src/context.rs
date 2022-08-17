@@ -1,7 +1,8 @@
 use ambassador::{delegatable_trait, Delegate};
+use meru_interface::Pixel;
 use serde::{Deserialize, Serialize};
 
-use crate::{apu, config, interface::Color, mbc::create_mbc, ppu, rom, util::to_si_bytesize};
+use crate::{apu, config, mbc::create_mbc, ppu, rom, util::to_si_bytesize};
 
 #[delegatable_trait]
 pub trait Bus {
@@ -103,7 +104,7 @@ impl Context {
         rom: crate::rom::Rom,
         boot_rom: &Option<Vec<u8>>,
         backup_ram: Option<Vec<u8>>,
-        dmg_palette: &[Color; 4],
+        dmg_palette: &[Pixel; 4],
     ) -> Self {
         let io = crate::io::Io::new();
 

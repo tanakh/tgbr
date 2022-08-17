@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     consts::{INT_JOYPAD, INT_TIMER},
     context,
-    interface::{Input, LinkCable},
+    interface::LinkCable,
     serial::SerialTransfer,
     util::{pack, trait_alias},
 };
@@ -28,6 +28,18 @@ pub struct Io {
 
     serial: SerialTransfer,
     input: Input,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct Input {
+    pub a: bool,
+    pub b: bool,
+    pub start: bool,
+    pub select: bool,
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
 }
 
 impl Default for Io {
@@ -106,7 +118,7 @@ impl Io {
 
     fn keypad_input_lines(&self) -> [bool; 4] {
         let mut lines = [true; 4];
-        let r = &self.input.pad;
+        let r = &self.input;
         if !self.select_action_buttons {
             lines[0] &= !r.a;
             lines[1] &= !r.b;

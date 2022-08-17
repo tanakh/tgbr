@@ -1,22 +1,82 @@
-use anyhow::{bail, Result};
+use meru_interface::{
+    AudioBuffer, CoreInfo, EmulatorCore, FrameBuffer, InputData, KeyConfig, Pixel,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{Config, Model},
+    consts,
     context::{self, Context},
-    interface::{AudioBuffer, Color, FrameBuffer, Input, LinkCable},
-    rom::{CgbFlag, Rom},
+    interface::LinkCable,
+    io::Input,
+    rom::{CgbFlag, Rom, RomError},
 };
 
 #[derive(Serialize, Deserialize)]
 pub struct GameBoy {
     rom_hash: [u8; 32],
-    // #[serde(flatten)]
+    config: Config,
     ctx: context::Context,
 }
 
-impl GameBoy {
-    pub fn new(rom: Rom, backup_ram: Option<Vec<u8>>, config: &Config) -> Result<Self> {
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    RomError(#[from] RomError),
+    #[error("This ROM support only CGB")]
+    DoesNotSupportCgb,
+    #[error("ROM hash mismatch")]
+    RomHashMismatch,
+    #[error("deserialize failed: {0}")]
+    DeserializeFailed(#[from] bincode::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+}
+
+const CORE_INFO: CoreInfo = CoreInfo {
+    system_name: "Game Boy (TGBR)",
+    abbrev: "gb",
+    file_extensions: &["gb", "gbc"],
+};
+
+fn default_key_config() -> KeyConfig {
+    use meru_interface::key_assign::*;
+
+    #[rustfmt::skip]
+    let keys = vec![
+        ("up", any!(keycode!(Up), pad_button!(0, DPadUp))),
+        ("down", any!(keycode!(Down), pad_button!(0, DPadDown))),
+        ("left", any!(keycode!(Left), pad_button!(0, DPadLeft))),
+        ("right", any!(keycode!(Right), pad_button!(0, DPadRight))),
+        ("a", any!(keycode!(X), pad_button!(0, South))),
+        ("b", any!(keycode!(Z), pad_button!(0, West))),
+        ("start", any!(keycode!(Return), pad_button!(0, Start))),
+        ("select", any!(keycode!(RShift), pad_button!(0, Select))),
+    ];
+
+    KeyConfig {
+        controllers: vec![keys.into_iter().map(|(k, v)| (k.to_string(), v)).collect()],
+    }
+}
+
+impl EmulatorCore for GameBoy {
+    type Error = Error;
+    type Config = Config;
+
+    fn core_info() -> &'static CoreInfo {
+        &CORE_INFO
+    }
+
+    fn try_from_file(
+        data: &[u8],
+        backup: Option<&[u8]>,
+        config: &Self::Config,
+    ) -> Result<Self, Self::Error>
+    where
+        Self: Sized,
+    {
+        let rom = Rom::from_bytes(data)?;
+
         let rom_hash = {
             use sha2::Digest;
             sha2::Sha256::digest(&rom.data).into()
@@ -39,7 +99,7 @@ impl GameBoy {
             }
             CgbFlag::OnlyCgb => {
                 if config.model == Model::Dmg {
-                    bail!("This ROM support only CGB");
+                    Err(Error::DoesNotSupportCgb)?
                 } else {
                     Model::Cgb
                 }
@@ -48,11 +108,14 @@ impl GameBoy {
 
         log::info!("Model: {model:?}");
 
-        let boot_rom = config.boot_roms.get(model).map(|r| r.to_owned());
+        let boot_rom = config.boot_roms()?.get(model).map(|r| r.to_owned());
+        let backup = backup.map(|r| r.to_vec());
+        let dmg_palette = config.palette.get_palette();
 
         let mut ret = Self {
             rom_hash,
-            ctx: Context::new(model, rom, &boot_rom, backup_ram, &config.dmg_palette),
+            config: config.clone(),
+            ctx: Context::new(model, rom, &boot_rom, backup, dmg_palette),
         };
 
         if boot_rom.is_none() {
@@ -64,6 +127,177 @@ impl GameBoy {
         Ok(ret)
     }
 
+    fn game_info(&self) -> Vec<(String, String)> {
+        self.ctx
+            .inner
+            .inner
+            .rom
+            .info()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect()
+    }
+
+    fn set_config(&mut self, config: &Self::Config) {
+        use context::Ppu;
+        self.config = config.clone();
+        self.ctx
+            .ppu_mut()
+            .set_dmg_palette(config.palette.get_palette());
+    }
+
+    fn exec_frame(&mut self, render_graphics: bool) {
+        use context::*;
+
+        let mut audio_buffer = self.ctx.apu_mut().audio_buffer_mut();
+        audio_buffer.samples.clear();
+        audio_buffer.sample_rate = consts::AUDIO_SAMPLE_PER_FRAME as u32 * 60;
+
+        self.ctx.ppu_mut().set_render_graphics(render_graphics);
+
+        let start_frame = self.ctx.inner.inner.ppu.frame();
+        while start_frame == self.ctx.inner.inner.ppu.frame() {
+            self.ctx.cpu.step(&mut self.ctx.inner);
+        }
+
+        let cc = make_color_correction(self.ctx.model().is_cgb() && self.config.color_correction);
+        cc.convert_frame_buffer(self.ctx.ppu_mut().frame_buffer_mut());
+    }
+
+    fn reset(&mut self) {
+        use context::*;
+
+        let model = self.ctx.model();
+        let backup_ram = self.backup();
+        let mut rom = crate::rom::Rom::default();
+        std::mem::swap(&mut rom, self.ctx.rom_mut());
+
+        let boot_rom = self.ctx.inner.bus.boot_rom().clone();
+        let dmg_palette = self.ctx.ppu().dmg_palette();
+
+        self.ctx = Context::new(model, rom, &boot_rom, backup_ram, dmg_palette);
+
+        if boot_rom.is_none() {
+            self.setup_initial_state();
+        }
+    }
+
+    fn frame_buffer(&self) -> &FrameBuffer {
+        self.ctx.inner.inner.ppu.frame_buffer()
+    }
+    fn audio_buffer(&self) -> &AudioBuffer {
+        self.ctx.inner.inner.apu.audio_buffer()
+    }
+
+    fn default_key_config() -> KeyConfig {
+        default_key_config()
+    }
+
+    fn set_input(&mut self, input: &InputData) {
+        let mut gb_input = Input::default();
+
+        for (key, value) in &input.controllers[0] {
+            match key.as_str() {
+                "up" => gb_input.up = *value,
+                "down" => gb_input.down = *value,
+                "left" => gb_input.left = *value,
+                "right" => gb_input.right = *value,
+                "a" => gb_input.a = *value,
+                "b" => gb_input.b = *value,
+                "start" => gb_input.start = *value,
+                "select" => gb_input.select = *value,
+                _ => unreachable!(),
+            }
+        }
+
+        let io = self.ctx.inner.bus.io();
+        io.set_input(&mut self.ctx.inner.inner, &gb_input);
+    }
+
+    fn backup(&self) -> Option<Vec<u8>> {
+        use crate::mbc::MbcTrait;
+        let external_ram = self.ctx.backup_ram();
+        let internal_ram = self.ctx.inner.bus.mbc().internal_ram();
+        assert!(!(external_ram.is_some() && internal_ram.is_some()));
+        if external_ram.is_some() {
+            external_ram
+        } else {
+            internal_ram.map(|r| r.to_vec())
+        }
+    }
+
+    fn save_state(&self) -> Vec<u8> {
+        let state = (&self.rom_hash, &self.ctx);
+        bincode::serialize(&state).unwrap()
+    }
+
+    fn load_state(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+        use context::*;
+        // TODO: limitation: cannot restore connector
+
+        // Deserialize object
+        let (rom_hash, mut ctx): ([u8; 32], Context) = bincode::deserialize(data)?;
+
+        // Restore unserialized fields
+        if self.rom_hash != rom_hash {
+            Err(Error::RomHashMismatch)?
+        }
+
+        std::mem::swap(self.ctx.rom_mut(), ctx.rom_mut());
+        self.ctx = ctx;
+
+        Ok(())
+    }
+}
+
+pub fn make_color_correction(color_correction: bool) -> Box<dyn ColorCorrection> {
+    if color_correction {
+        Box::new(CorrectColor) as Box<dyn ColorCorrection>
+    } else {
+        Box::new(RawColor) as Box<dyn ColorCorrection>
+    }
+}
+
+pub trait ColorCorrection {
+    fn translate(&self, c: &Pixel) -> Pixel;
+
+    fn convert_frame_buffer(&self, buffer: &mut FrameBuffer) {
+        let width = buffer.width;
+        let height = buffer.height;
+
+        for y in 0..height {
+            for x in 0..width {
+                let c = self.translate(buffer.pixel(x, y));
+                *buffer.pixel_mut(x, y) = c;
+            }
+        }
+    }
+}
+
+struct RawColor;
+
+impl ColorCorrection for RawColor {
+    fn translate(&self, c: &Pixel) -> Pixel {
+        c.clone()
+    }
+}
+
+struct CorrectColor;
+
+impl ColorCorrection for CorrectColor {
+    fn translate(&self, c: &Pixel) -> Pixel {
+        let r = c.r as u16;
+        let g = c.g as u16;
+        let b = c.b as u16;
+        Pixel::new(
+            (((r * 26 + g * 4 + b * 2) / 32) as u8).min(240),
+            (((g * 24 + b * 8) / 32) as u8).min(240),
+            (((r * 6 + g * 4 + b * 22) / 32) as u8).min(240),
+        )
+    }
+}
+
+impl GameBoy {
     fn setup_initial_state(&mut self) {
         match context::Model::model(&self.ctx) {
             Model::Dmg => {
@@ -96,98 +330,8 @@ impl GameBoy {
         }
     }
 
-    pub fn info(&self) -> Vec<(&str, String)> {
-        self.ctx.inner.inner.rom.info()
-    }
-
-    pub fn reset(&mut self) {
-        use context::*;
-
-        let model = self.ctx.model();
-        let backup_ram = self.backup_ram();
-        let mut rom = crate::rom::Rom::default();
-        std::mem::swap(&mut rom, self.ctx.rom_mut());
-
-        let boot_rom = self.ctx.inner.bus.boot_rom().clone();
-        let dmg_palette = self.ctx.inner.inner.ppu.dmg_palette();
-
-        self.ctx = Context::new(model, rom, &boot_rom, backup_ram, dmg_palette);
-
-        if boot_rom.is_none() {
-            self.setup_initial_state();
-        }
-    }
-
-    pub fn exec_frame(&mut self, render_graphics: bool) {
-        use context::*;
-
-        self.ctx.apu_mut().audio_buffer_mut().buf.clear();
-        self.ctx.ppu_mut().set_render_graphics(render_graphics);
-
-        let start_frame = self.ctx.inner.inner.ppu.frame();
-        while start_frame == self.ctx.inner.inner.ppu.frame() {
-            self.ctx.cpu.step(&mut self.ctx.inner);
-        }
-    }
-
-    pub fn model(&self) -> Model {
-        use context::Model;
-        self.ctx.model()
-    }
-
-    pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
-        self.ctx.inner.inner.ppu.set_dmg_palette(palette);
-    }
-
-    pub fn set_input(&mut self, input: &Input) {
-        let io = self.ctx.inner.bus.io();
-        io.set_input(&mut self.ctx.inner.inner, input);
-    }
-
-    pub fn frame_buffer(&self) -> &FrameBuffer {
-        self.ctx.inner.inner.ppu.frame_buffer()
-    }
-
-    pub fn audio_buffer(&self) -> &AudioBuffer {
-        self.ctx.inner.inner.apu.audio_buffer()
-    }
-
-    pub fn backup_ram(&self) -> Option<Vec<u8>> {
-        use crate::mbc::MbcTrait;
-        let external_ram = self.ctx.backup_ram();
-        let internal_ram = self.ctx.inner.bus.mbc().internal_ram();
-        assert!(!(external_ram.is_some() && internal_ram.is_some()));
-        if external_ram.is_some() {
-            external_ram
-        } else {
-            internal_ram.map(|r| r.to_vec())
-        }
-    }
-
     pub fn set_link_cable(&mut self, link_cable: Option<impl LinkCable + Send + Sync + 'static>) {
         let link_cable = link_cable.map(|r| Box::new(r) as Box<dyn LinkCable + Send + Sync>);
         self.ctx.inner.bus.io().set_link_cable(link_cable);
-    }
-
-    pub fn save_state(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
-    }
-
-    pub fn load_state(&mut self, data: &[u8]) -> Result<()> {
-        use context::*;
-        // TODO: limitation: cannot restore connector
-
-        // Deserialize object
-        let mut gb: GameBoy = bincode::deserialize(data)?;
-
-        // Restore unserialized fields
-        if self.rom_hash != gb.rom_hash {
-            bail!("ROM hash mismatch");
-        }
-
-        std::mem::swap(self.ctx.rom_mut(), gb.ctx.rom_mut());
-        *self = gb;
-
-        Ok(())
     }
 }

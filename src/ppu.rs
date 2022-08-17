@@ -1,5 +1,6 @@
 use bitvec::prelude::*;
 use log::{debug, error, trace, warn};
+use meru_interface::{FrameBuffer, Pixel};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,7 +8,6 @@ use crate::{
         DOTS_PER_LINE, INT_LCD_STAT, INT_VBLANK, LINES_PER_FRAME, SCREEN_WIDTH, VISIBLE_RANGE,
     },
     context,
-    interface::{Color, FrameBuffer},
     util::{pack, trait_alias},
 };
 
@@ -54,7 +54,7 @@ pub struct Ppu {
     frame: u64,
     window_rendering_counter: u8,
 
-    dmg_palette: [Color; 4],
+    dmg_palette: [Pixel; 4],
 
     #[serde(with = "serde_bytes")]
     line_buffer: Vec<u8>,
@@ -86,24 +86,24 @@ impl Default for Mode {
 }
 
 impl Ppu {
-    pub fn new(dmg_palette: &[Color; 4]) -> Self {
+    pub fn new(dmg_palette: &[Pixel; 4]) -> Self {
         Self {
             bg_col_pal: vec![0; 64],
             obj_col_pal: vec![0; 64],
             line_buffer: vec![0; SCREEN_WIDTH as usize],
             line_buffer_col: vec![0; SCREEN_WIDTH as usize],
             line_buffer_attr: vec![0; SCREEN_WIDTH as usize],
-            dmg_palette: *dmg_palette,
+            dmg_palette: dmg_palette.clone(),
             ..Default::default()
         }
     }
 
-    pub fn dmg_palette(&self) -> &[Color; 4] {
+    pub fn dmg_palette(&self) -> &[Pixel; 4] {
         &self.dmg_palette
     }
 
-    pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
-        self.dmg_palette = *palette;
+    pub fn set_dmg_palette(&mut self, palette: &[Pixel; 4]) {
+        self.dmg_palette = palette.clone();
     }
 
     pub fn set_render_graphics(&mut self, render_graphics: bool) {
@@ -112,6 +112,10 @@ impl Ppu {
 
     pub fn frame_buffer(&self) -> &FrameBuffer {
         &self.frame_buffer
+    }
+
+    pub fn frame_buffer_mut(&mut self) -> &mut FrameBuffer {
+        &mut self.frame_buffer
     }
 
     pub fn tick(&mut self, ctx: &mut impl Context) {
@@ -449,12 +453,12 @@ impl Ppu {
     }
 }
 
-fn decode_color(c: u16) -> Color {
+fn decode_color(c: u16) -> Pixel {
     let v = c.view_bits::<Lsb0>();
     let r = v[0..=4].load::<u8>();
     let g = v[5..=9].load::<u8>();
     let b = v[10..=14].load::<u8>();
-    Color {
+    Pixel {
         r: r << 3 | r >> 2,
         g: g << 3 | g >> 2,
         b: b << 3 | b >> 2,
@@ -483,14 +487,13 @@ impl Ppu {
         let y = self.ly as usize;
         if ctx.model().is_cgb() {
             for x in 0..SCREEN_WIDTH as usize {
-                self.frame_buffer
-                    .set(x, y, decode_color(self.line_buffer_col[x]));
+                *self.frame_buffer.pixel_mut(x, y) = decode_color(self.line_buffer_col[x]);
             }
         } else {
             for x in 0..SCREEN_WIDTH as usize {
                 let c = self.line_buffer[x];
-                let color = self.dmg_palette[(c & 3) as usize];
-                self.frame_buffer.set(x, y, color)
+                let color = self.dmg_palette[(c & 3) as usize].clone();
+                *self.frame_buffer.pixel_mut(x, y) = color;
             }
         }
     }

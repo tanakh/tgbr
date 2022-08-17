@@ -1,4 +1,3 @@
-use anyhow::{bail, Result};
 use log::warn;
 use std::fmt::Display;
 
@@ -90,6 +89,20 @@ pub enum Mbc {
     HuC3,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum RomError {
+    #[error("Unknown cartridge type: ${0:02X}")]
+    UnknownCartridgeType(u8),
+    #[error("Invalid ROM size: ${0:02X}")]
+    InvalidRomSize(u8),
+    #[error("ROM size mismatch: header expected {expected}, but actual size is {actual}")]
+    RomSizeMismatch { expected: u32, actual: u32 },
+    #[error("Invalid RAM size: ${0:02X}")]
+    InvalidRamSize(u8),
+    #[error("Invalid destination code: ${0:02X}")]
+    InvalidDestinationCode(u8),
+}
+
 impl Display for Mbc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -108,7 +121,7 @@ impl Display for Mbc {
 }
 
 impl CartridgeType {
-    pub fn from_code(code: u8) -> Result<Self> {
+    pub fn from_code(code: u8) -> Result<Self, RomError> {
         let ret = Self {
             code,
             ..Default::default()
@@ -147,7 +160,7 @@ impl CartridgeType {
                 .with_battery(),
             0xFE => ret.with_mbc(HuC3),
             0xFF => ret.with_mbc(HuC1).with_ram().with_battery(),
-            _ => bail!("Unknown cartridge type: ${code:02X}"),
+            _ => Err(RomError::UnknownCartridgeType(code))?,
         })
     }
 
@@ -202,19 +215,19 @@ impl Display for CartridgeType {
 }
 
 impl Rom {
-    pub fn from_bytes(bytes: &[u8]) -> Result<Rom> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Rom, RomError> {
         let header = &bytes[0x100..=0x14f];
 
         let title = String::from_utf8_lossy(&header[0x34..=0x43]).to_string();
 
-        let manufacturer_code: [u8; 4] = header[0x3f..=0x42].try_into()?;
+        let manufacturer_code: [u8; 4] = header[0x3f..=0x42].try_into().unwrap();
         let cgb_flag = match header[0x43] {
             0x80 => CgbFlag::SupportCgb,
             0xC0 => CgbFlag::OnlyCgb,
             _ => CgbFlag::NonCgb,
         };
 
-        let new_licensee_code: [u8; 2] = header[0x44..=0x45].try_into()?;
+        let new_licensee_code: [u8; 2] = header[0x44..=0x45].try_into().unwrap();
         let sgb_flag = match header[0x46] {
             0x03 => true,
             0x00 => false,
@@ -228,14 +241,14 @@ impl Rom {
 
         let rom_size: u64 = match header[0x48] {
             n @ (0x00..=0x08) => (32 * 1024) << n,
-            n => bail!("Invalid ROM size: ${n:02X}"),
+            n => Err(RomError::InvalidRomSize(n))?,
         };
 
         if bytes.len() as u64 != rom_size {
-            bail!(
-                "ROM size mismatch: header expected {rom_size}, but actual size is  {}",
-                bytes.len()
-            );
+            Err(RomError::RomSizeMismatch {
+                expected: rom_size as u32,
+                actual: bytes.len() as u32,
+            })?
         }
 
         let ram_size = match header[0x49] {
@@ -248,13 +261,13 @@ impl Rom {
             3 => 32 * 1024,
             4 => 128 * 1024,
             5 => 64 * 1024,
-            n => bail!("Invalid RAM size: ${n:02X}"),
+            n => Err(RomError::InvalidRamSize(n))?,
         };
 
         let destination_code = match header[0x4a] {
             0x00 => DestinationCode::Japanese,
             0x01 => DestinationCode::NonJapanese,
-            v => bail!("Invalid destination code: ${v:02X}"),
+            v => Err(RomError::InvalidDestinationCode(v))?,
         };
 
         // Specifies the games company/publisher code in range $00-FF.

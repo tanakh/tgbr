@@ -1,11 +1,11 @@
 use bitvec::prelude::*;
 use log::trace;
+use meru_interface::{AudioBuffer, AudioSample};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 
 use crate::{
     consts::{AUDIO_SAMPLE_PER_FRAME, DOTS_PER_LINE, LINES_PER_FRAME},
-    interface::{AudioBuffer, AudioSample},
     util::{pack, ClockDivider},
 };
 
@@ -116,7 +116,7 @@ impl Apu {
         if self.sampling_counter >= TICKS_PER_SECOND {
             self.sampling_counter -= TICKS_PER_SECOND;
             let sample = self.mix_output();
-            self.audio_buffer.buf.push(sample);
+            self.audio_buffer.samples.push(sample);
         }
     }
 
