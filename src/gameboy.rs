@@ -1,7 +1,6 @@
 use meru_interface::{
     AudioBuffer, CoreInfo, EmulatorCore, FrameBuffer, InputData, KeyConfig, Pixel,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{Config, Model},
@@ -12,10 +11,10 @@ use crate::{
     rom::{CgbFlag, Rom, RomError},
 };
 
-#[derive(Serialize, Deserialize)]
 pub struct GameBoy {
     rom_hash: [u8; 32],
     config: Config,
+    corrected_frame_buffer: FrameBuffer,
     ctx: context::Context,
 }
 
@@ -115,6 +114,10 @@ impl EmulatorCore for GameBoy {
         let mut ret = Self {
             rom_hash,
             config: config.clone(),
+            corrected_frame_buffer: FrameBuffer::new(
+                consts::SCREEN_WIDTH as _,
+                consts::SCREEN_HEIGHT as _,
+            ),
             ctx: Context::new(model, rom, &boot_rom, backup, dmg_palette),
         };
 
@@ -153,15 +156,26 @@ impl EmulatorCore for GameBoy {
         audio_buffer.samples.clear();
         audio_buffer.sample_rate = consts::AUDIO_SAMPLE_PER_FRAME as u32 * 60;
 
+        self.ctx
+            .ppu_mut()
+            .frame_buffer_mut()
+            .resize(consts::SCREEN_WIDTH as _, consts::SCREEN_HEIGHT as _);
+
         self.ctx.ppu_mut().set_render_graphics(render_graphics);
 
-        let start_frame = self.ctx.inner.inner.ppu.frame();
-        while start_frame == self.ctx.inner.inner.ppu.frame() {
+        let start_frame = self.ctx.ppu().frame();
+        while start_frame == self.ctx.ppu().frame() {
             self.ctx.cpu.step(&mut self.ctx.inner);
         }
 
-        let cc = make_color_correction(self.ctx.model().is_cgb() && self.config.color_correction);
-        cc.convert_frame_buffer(self.ctx.ppu_mut().frame_buffer_mut());
+        if render_graphics {
+            let cc =
+                make_color_correction(self.ctx.model().is_cgb() && self.config.color_correction);
+            cc.convert_frame_buffer(
+                &mut self.corrected_frame_buffer,
+                self.ctx.ppu_mut().frame_buffer_mut(),
+            );
+        }
     }
 
     fn reset(&mut self) {
@@ -183,10 +197,11 @@ impl EmulatorCore for GameBoy {
     }
 
     fn frame_buffer(&self) -> &FrameBuffer {
-        self.ctx.inner.inner.ppu.frame_buffer()
+        &self.corrected_frame_buffer
     }
     fn audio_buffer(&self) -> &AudioBuffer {
-        self.ctx.inner.inner.apu.audio_buffer()
+        use context::Apu;
+        self.ctx.apu().audio_buffer()
     }
 
     fn default_key_config() -> KeyConfig {
@@ -250,7 +265,7 @@ impl EmulatorCore for GameBoy {
     }
 }
 
-pub fn make_color_correction(color_correction: bool) -> Box<dyn ColorCorrection> {
+fn make_color_correction(color_correction: bool) -> Box<dyn ColorCorrection> {
     if color_correction {
         Box::new(CorrectColor) as Box<dyn ColorCorrection>
     } else {
@@ -258,17 +273,19 @@ pub fn make_color_correction(color_correction: bool) -> Box<dyn ColorCorrection>
     }
 }
 
-pub trait ColorCorrection {
+trait ColorCorrection {
     fn translate(&self, c: &Pixel) -> Pixel;
 
-    fn convert_frame_buffer(&self, buffer: &mut FrameBuffer) {
-        let width = buffer.width;
-        let height = buffer.height;
+    fn convert_frame_buffer(&self, dest: &mut FrameBuffer, src: &FrameBuffer) {
+        let width = src.width;
+        let height = src.height;
+
+        dest.resize(width, height);
 
         for y in 0..height {
             for x in 0..width {
-                let c = self.translate(buffer.pixel(x, y));
-                *buffer.pixel_mut(x, y) = c;
+                let c = self.translate(src.pixel(x, y));
+                *dest.pixel_mut(x, y) = c;
             }
         }
     }
