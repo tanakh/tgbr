@@ -153,11 +153,11 @@ pub struct CustomBootRoms {
 
 #[rustfmt::skip]
 const BOOT_ROMS: &[(&str, &[u8])] = &[
-    ("DMG", include_bytes!("../../assets/sameboy-bootroms/dmg_boot.bin")),
-    ("CGB", include_bytes!("../../assets/sameboy-bootroms/cgb_boot.bin")),
-    ("SGB", include_bytes!("../../assets/sameboy-bootroms/sgb_boot.bin")),
-    ("SGB2",include_bytes!("../../assets/sameboy-bootroms/sgb2_boot.bin")),
-    ("AGB", include_bytes!("../../assets/sameboy-bootroms/agb_boot.bin")),
+    ("DMG", include_bytes!("../assets/sameboy-bootroms/dmg_boot.bin")),
+    ("CGB", include_bytes!("../assets/sameboy-bootroms/cgb_boot.bin")),
+    ("SGB", include_bytes!("../assets/sameboy-bootroms/sgb_boot.bin")),
+    ("SGB2",include_bytes!("../assets/sameboy-bootroms/sgb2_boot.bin")),
+    ("AGB", include_bytes!("../assets/sameboy-bootroms/agb_boot.bin")),
 ];
 
 #[derive(Default, Clone)]
