@@ -2,7 +2,7 @@ use ambassador::{delegatable_trait, Delegate};
 use meru_interface::Pixel;
 use serde::{Deserialize, Serialize};
 
-use crate::{apu, config, mbc::create_mbc, ppu, rom, util::to_si_bytesize};
+use crate::{apu, config, gameboy::Error, mbc::create_mbc, ppu, rom, util::to_si_bytesize};
 
 #[delegatable_trait]
 pub trait Bus {
@@ -105,7 +105,7 @@ impl Context {
         boot_rom: &Option<Vec<u8>>,
         backup_ram: Option<Vec<u8>>,
         dmg_palette: &[Pixel; 4],
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let io = crate::io::Io::new();
 
         let mut backup_ram = backup_ram;
@@ -116,7 +116,7 @@ impl Context {
         } else {
             None
         };
-        let mbc = create_mbc(&rom, internal_ram);
+        let mbc = create_mbc(&rom, internal_ram)?;
         let bus = crate::bus::Bus::new(model, mbc, boot_rom, io);
         let vram_size = if model.is_cgb() { 0x4000 } else { 0x2000 };
         let running_mode = if model.is_cgb() {
@@ -141,7 +141,7 @@ impl Context {
             vec![0; rom.ram_size as usize]
         };
 
-        Self {
+        Ok(Self {
             cpu: crate::cpu::Cpu::new(),
             inner: InnerContext0 {
                 bus,
@@ -164,7 +164,7 @@ impl Context {
                     },
                 },
             },
-        }
+        })
     }
 
     pub fn backup_ram(&self) -> Option<Vec<u8>> {

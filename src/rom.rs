@@ -76,7 +76,7 @@ pub struct CartridgeType {
     pub has_sensor: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Mbc {
     Mbc1,
     Mbc2,

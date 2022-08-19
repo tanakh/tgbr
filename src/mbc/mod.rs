@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     context,
+    gameboy::Error,
     rom::{self, Rom},
     util::trait_alias,
 };
@@ -67,15 +68,15 @@ macro_rules! def_mbc {
             )*
         }
 
-        pub fn create_mbc(rom: &Rom, internal_ram: Option<Vec<u8>>) -> Mbc {
+        pub fn create_mbc(rom: &Rom, internal_ram: Option<Vec<u8>>) -> Result<Mbc, Error> {
             let cart_type = rom.cartridge_type.clone();
-            match cart_type.mbc {
+            Ok(match cart_type.mbc {
                 None => Mbc::NullMbc(NullMbc::new(rom)),
                 $(
                     Some(rom::Mbc::$id) => Mbc::$id(<$ty>::new(rom, internal_ram)),
                 )*
-                Some(mbc) => todo!("{} is currently unsupported", mbc),
-            }
+                Some(mbc) => Err(Error::UnsupportedMbc(mbc))?,
+            })
         }
     }
 }

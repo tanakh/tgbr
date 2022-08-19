@@ -8,7 +8,7 @@ use crate::{
     context::{self, Context},
     interface::LinkCable,
     io::Input,
-    rom::{CgbFlag, Rom, RomError},
+    rom::{CgbFlag, Mbc, Rom, RomError},
 };
 
 pub struct GameBoy {
@@ -26,6 +26,8 @@ pub enum Error {
     DoesNotSupportCgb,
     #[error("ROM hash mismatch")]
     RomHashMismatch,
+    #[error("{0} is currently unsupported")]
+    UnsupportedMbc(Mbc),
     #[error("deserialize failed: {0}")]
     DeserializeFailed(#[from] bincode::Error),
     #[error("{0}")]
@@ -118,7 +120,7 @@ impl EmulatorCore for GameBoy {
                 consts::SCREEN_WIDTH as _,
                 consts::SCREEN_HEIGHT as _,
             ),
-            ctx: Context::new(model, rom, &boot_rom, backup, dmg_palette),
+            ctx: Context::new(model, rom, &boot_rom, backup, dmg_palette)?,
         };
 
         if boot_rom.is_none() {
@@ -189,7 +191,7 @@ impl EmulatorCore for GameBoy {
         let boot_rom = self.ctx.inner.bus.boot_rom().clone();
         let dmg_palette = self.ctx.ppu().dmg_palette();
 
-        self.ctx = Context::new(model, rom, &boot_rom, backup_ram, dmg_palette);
+        self.ctx = Context::new(model, rom, &boot_rom, backup_ram, dmg_palette).unwrap();
 
         if boot_rom.is_none() {
             self.setup_initial_state();
@@ -213,14 +215,14 @@ impl EmulatorCore for GameBoy {
 
         for (key, value) in &input.controllers[0] {
             match key.as_str() {
-                "up" => gb_input.up = *value,
-                "down" => gb_input.down = *value,
-                "left" => gb_input.left = *value,
-                "right" => gb_input.right = *value,
-                "a" => gb_input.a = *value,
-                "b" => gb_input.b = *value,
-                "start" => gb_input.start = *value,
-                "select" => gb_input.select = *value,
+                "Up" => gb_input.up = *value,
+                "Down" => gb_input.down = *value,
+                "Left" => gb_input.left = *value,
+                "Right" => gb_input.right = *value,
+                "A" => gb_input.a = *value,
+                "B" => gb_input.b = *value,
+                "Start" => gb_input.start = *value,
+                "Select" => gb_input.select = *value,
                 _ => unreachable!(),
             }
         }
