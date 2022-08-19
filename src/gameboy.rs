@@ -45,14 +45,14 @@ fn default_key_config() -> KeyConfig {
 
     #[rustfmt::skip]
     let keys = vec![
-        ("up", any!(keycode!(Up), pad_button!(0, DPadUp))),
-        ("down", any!(keycode!(Down), pad_button!(0, DPadDown))),
-        ("left", any!(keycode!(Left), pad_button!(0, DPadLeft))),
-        ("right", any!(keycode!(Right), pad_button!(0, DPadRight))),
-        ("a", any!(keycode!(X), pad_button!(0, South))),
-        ("b", any!(keycode!(Z), pad_button!(0, West))),
-        ("start", any!(keycode!(Return), pad_button!(0, Start))),
-        ("select", any!(keycode!(RShift), pad_button!(0, Select))),
+        ("Up", any!(keycode!(Up), pad_button!(0, DPadUp))),
+        ("Down", any!(keycode!(Down), pad_button!(0, DPadDown))),
+        ("Left", any!(keycode!(Left), pad_button!(0, DPadLeft))),
+        ("Right", any!(keycode!(Right), pad_button!(0, DPadRight))),
+        ("A", any!(keycode!(X), pad_button!(0, East))),
+        ("B", any!(keycode!(Z), pad_button!(0, South))),
+        ("Start", any!(keycode!(Return), pad_button!(0, Start))),
+        ("Select", any!(keycode!(RShift), pad_button!(0, Select))),
     ];
 
     KeyConfig {
