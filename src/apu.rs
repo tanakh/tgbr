@@ -125,16 +125,11 @@ impl Apu {
             return AudioSample::new(0, 0);
         }
 
-        let dac = |output: Option<u8>| match output {
-            None => 0,
-            Some(output) => (output as i16 * 1000 - 7500) / 8,
-        };
-
         let ch_output = [
-            dac(self.pulse[0].output()),
-            dac(self.pulse[1].output()),
-            dac(self.wave.output()),
-            dac(self.noise.output()),
+            self.pulse[0].output(),
+            self.pulse[1].output(),
+            self.wave.output(),
+            self.noise.output(),
         ];
 
         let mut output = [0, 0];
@@ -142,13 +137,13 @@ impl Apu {
         for (i, out) in output.iter_mut().enumerate() {
             for (j, ch_out) in ch_output.iter().enumerate() {
                 if self.channel_ctrl[i].output_ch[j] {
-                    *out += *ch_out;
+                    *out += *ch_out as i32;
                 }
             }
-            *out *= self.channel_ctrl[i].volume as i16 + 1;
+            *out = *out * self.channel_ctrl[i].volume as i32 / 8;
         }
 
-        AudioSample::new(output[0], output[1])
+        AudioSample::new(output[0] as i16, output[1] as i16)
     }
 }
 
@@ -214,13 +209,13 @@ impl Apu {
 
             // PCM12
             0xFF76 => pack! {
-                4..=7 => self.pulse[1].output().unwrap_or(0),
-                0..=3 => self.pulse[0].output().unwrap_or(0),
+                4..=7 => self.pulse[1].level(),
+                0..=3 => self.pulse[0].level(),
             },
             // PCM34
             0xFF77 => pack! {
-                4..=7 => self.noise.output().unwrap_or(0),
-                0..=3 => self.wave.output().unwrap_or(0),
+                4..=7 => self.noise.level(),
+                0..=3 => self.wave.level(),
             },
 
             _ => unreachable!(),
@@ -559,19 +554,28 @@ impl Pulse {
         }
     }
 
-    // return Some(0..=15) value if the channel is enabled, otherwise None
-    fn output(&self) -> Option<u8> {
-        const WAVEFORM: [[u8; 8]; 4] = [
-            [0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 1, 1, 1],
-            [0, 1, 1, 1, 1, 1, 1, 0],
-        ];
+    const WAVEFORM: [[u8; 8]; 4] = [
+        [0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 1, 1, 1],
+        [0, 1, 1, 1, 1, 1, 1, 0],
+    ];
 
+    fn level(&self) -> u8 {
         if !self.on {
-            None
+            0
         } else {
-            Some(WAVEFORM[self.duty as usize][self.phase as usize] * self.current_volume)
+            Self::WAVEFORM[self.duty as usize][self.phase as usize] * self.current_volume
+        }
+    }
+
+    fn output(&self) -> i16 {
+        if !self.on {
+            0
+        } else {
+            (Self::WAVEFORM[self.duty as usize][self.phase as usize] as i16 * 2 - 1)
+                * self.current_volume as i16
+                * 256
         }
     }
 }
@@ -701,15 +705,29 @@ impl Wave {
         }
     }
 
-    fn output(&self) -> Option<u8> {
-        if self.on {
-            Some(if self.output_level == 0 {
-                0
-            } else {
-                self.sample_latch >> (self.output_level - 1)
-            })
+    fn level(&self) -> u8 {
+        if !self.on {
+            0
         } else {
-            None
+            self.sample_latch * self.amp() / 4
+        }
+    }
+
+    fn output(&self) -> i16 {
+        if !self.on {
+            0
+        } else {
+            (self.sample_latch as i16 * 2 - 15) * 256 * self.amp() as i16 / 4
+        }
+    }
+
+    fn amp(&self) -> u8 {
+        match self.output_level {
+            0 => 0,
+            1 => 4,
+            2 => 2,
+            3 => 1,
+            _ => unreachable!(),
         }
     }
 }
@@ -905,16 +923,24 @@ impl Noise {
         }
     }
 
-    fn output(&mut self) -> Option<u8> {
+    fn level(&mut self) -> u8 {
         if !self.on {
-            None
+            0
+        } else {
+            ((self.lsfr & 1) ^ 1) as u8 * self.current_volume
+        }
+    }
+
+    fn output(&mut self) -> i16 {
+        if !self.on {
+            0
         } else {
             let sample_acc = self.sample_acc + ((self.lsfr & 1) ^ 1) as usize;
             let sample_count = self.sample_count + 1;
-            let ret = sample_acc * self.current_volume as usize / sample_count;
             self.sample_acc = 0;
             self.sample_count = 0;
-            Some(ret as u8)
+            ((sample_acc as i32 * 512 / sample_count as i32 - 256) * self.current_volume as i32)
+                as i16
         }
     }
 }
