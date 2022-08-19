@@ -6,18 +6,7 @@ use tgbr::{
     config::{BootRom, Config, Model},
     gameboy::GameBoy,
     interface::LinkCable,
-    BootRoms,
 };
-
-fn boot_roms() -> BootRoms {
-    BootRoms {
-        dmg: Some(include_bytes!("../assets/sameboy-bootroms/dmg_boot.bin").to_vec()),
-        cgb: Some(include_bytes!("../assets/sameboy-bootroms/cgb_boot.bin").to_vec()),
-        sgb: Some(include_bytes!("../assets/sameboy-bootroms/sgb_boot.bin").to_vec()),
-        sgb2: Some(include_bytes!("../assets/sameboy-bootroms/sgb2_boot.bin").to_vec()),
-        agb: Some(include_bytes!("../assets/sameboy-bootroms/agb_boot.bin").to_vec()),
-    }
-}
 
 type Ref<T> = Arc<Mutex<T>>;
 
