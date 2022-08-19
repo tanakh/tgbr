@@ -297,7 +297,7 @@ impl Ppu {
 
             _ => todo!("Read from LCD I/O: ${addr:04X}"),
         };
-        // trace!("PPU Read: ${addr:04X} = ${data:02X}");
+        trace!("PPU Read: ${addr:04X} = ${data:02X}");
         data
     }
 

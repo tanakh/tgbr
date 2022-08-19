@@ -202,9 +202,7 @@ impl Config {
                 }
             }
             BootRom::Custom => {
-                let load = |path: &Option<PathBuf>| {
-                    path.as_ref().map(|path| std::fs::read(path)).transpose()
-                };
+                let load = |path: &Option<PathBuf>| path.as_ref().map(std::fs::read).transpose();
                 BootRoms {
                     dmg: load(&self.custom_boot_roms.dmg)?,
                     cgb: load(&self.custom_boot_roms.cgb)?,
