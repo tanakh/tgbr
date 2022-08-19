@@ -1,11 +1,11 @@
 use anyhow::{bail, Result};
+use meru_interface::EmulatorCore;
 use std::sync::{Arc, Mutex};
 
 use tgbr::{
-    config::{Config, Model},
+    config::{BootRom, Config, Model},
     gameboy::GameBoy,
     interface::LinkCable,
-    rom::Rom,
     BootRoms,
 };
 
@@ -55,13 +55,13 @@ fn test_serial_output_test_rom(
     rom_bytes: &[u8],
     check_fn: impl CheckFn + Send + Sync + 'static,
 ) -> Result<()> {
-    let boot_roms = boot_roms();
-    let rom = Rom::from_bytes(rom_bytes)?;
-    let config = Config::default()
-        .set_model(Model::Dmg)
-        .set_boot_rom(boot_roms);
+    let config = Config {
+        model: Model::Dmg,
+        boot_rom: BootRom::Internal,
+        ..Default::default()
+    };
 
-    let mut gb = GameBoy::new(rom, None, &config)?;
+    let mut gb = GameBoy::try_from_file(rom_bytes, None, &config)?;
 
     let buf = Ref::default();
     let completed = Ref::default();
