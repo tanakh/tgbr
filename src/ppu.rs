@@ -1,6 +1,6 @@
 use bitvec::prelude::*;
 use log::{debug, error, trace, warn};
-use meru_interface::{FrameBuffer, Pixel};
+use meru_interface::{Color, FrameBuffer};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -54,7 +54,7 @@ pub struct Ppu {
     frame: u64,
     window_rendering_counter: u8,
 
-    dmg_palette: [Pixel; 4],
+    dmg_palette: [Color; 4],
 
     #[serde(with = "serde_bytes")]
     line_buffer: Vec<u8>,
@@ -86,7 +86,7 @@ impl Default for Mode {
 }
 
 impl Ppu {
-    pub fn new(dmg_palette: &[Pixel; 4]) -> Self {
+    pub fn new(dmg_palette: &[Color; 4]) -> Self {
         Self {
             bg_col_pal: vec![0; 64],
             obj_col_pal: vec![0; 64],
@@ -98,11 +98,11 @@ impl Ppu {
         }
     }
 
-    pub fn dmg_palette(&self) -> &[Pixel; 4] {
+    pub fn dmg_palette(&self) -> &[Color; 4] {
         &self.dmg_palette
     }
 
-    pub fn set_dmg_palette(&mut self, palette: &[Pixel; 4]) {
+    pub fn set_dmg_palette(&mut self, palette: &[Color; 4]) {
         self.dmg_palette = palette.clone();
     }
 
@@ -453,12 +453,12 @@ impl Ppu {
     }
 }
 
-fn decode_color(c: u16) -> Pixel {
+fn decode_color(c: u16) -> Color {
     let v = c.view_bits::<Lsb0>();
     let r = v[0..=4].load::<u8>();
     let g = v[5..=9].load::<u8>();
     let b = v[10..=14].load::<u8>();
-    Pixel {
+    Color {
         r: r << 3 | r >> 2,
         g: g << 3 | g >> 2,
         b: b << 3 | b >> 2,

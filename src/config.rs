@@ -1,13 +1,14 @@
-use meru_interface::{ConfigUi, Pixel, Ui};
+use meru_interface::{Color, File};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, JsonSchema, Serialize, Deserialize)]
 pub struct Config {
     pub model: Model,
     pub boot_rom: BootRom,
     pub custom_boot_roms: CustomBootRoms,
     pub palette: PaletteSelect,
+    pub custom_palette: Palette,
     pub color_correction: bool,
 }
 
@@ -18,104 +19,13 @@ impl Default for Config {
             boot_rom: BootRom::Internal,
             custom_boot_roms: CustomBootRoms::default(),
             palette: PaletteSelect::Pocket,
+            custom_palette: PALETTE_GRAYSCALE,
             color_correction: true,
         }
     }
 }
 
-impl ConfigUi for Config {
-    fn ui(&mut self, ui: &mut impl Ui) {
-        ui.horizontal(|ui| {
-            ui.label("Model:");
-            ui.radio(
-                &mut self.model,
-                &[
-                    ("Auto", Model::Auto),
-                    ("CGB", Model::Cgb),
-                    ("SGB", Model::Sgb),
-                ],
-            );
-        });
-
-        ui.label("Boot ROM:");
-        ui.horizontal(|ui| {
-            ui.radio(
-                &mut self.boot_rom,
-                &[
-                    ("Do not use", BootRom::None),
-                    ("Use internal ROM", BootRom::Internal),
-                    ("Use specified ROM", BootRom::Custom),
-                ],
-            );
-        });
-
-        ui.enabled(self.boot_rom == BootRom::Custom, |ui| {
-            ui.file(
-                "DMG boot ROM:",
-                &mut self.custom_boot_roms.dmg,
-                &[("Boot ROM file", &["*"])],
-            );
-
-            ui.file(
-                "CGB boot ROM:",
-                &mut self.custom_boot_roms.cgb,
-                &[("Boot ROM file", &["*"])],
-            );
-        });
-
-        ui.label("Graphics:");
-        ui.checkbox(&mut self.color_correction, "Color Correction");
-
-        ui.label("GameBoy Palette:");
-
-        ui.horizontal(|ui| {
-            #[derive(Clone)]
-            struct Palette(PaletteSelect);
-
-            impl PartialEq for Palette {
-                fn eq(&self, other: &Self) -> bool {
-                    use PaletteSelect::*;
-                    match (&self.0, &other.0) {
-                        (Custom(_), Custom(_)) => true,
-                        _ => self.0 == other.0,
-                    }
-                }
-            }
-
-            let mut palette = Palette(self.palette.clone());
-
-            ui.combo_box(
-                &mut palette,
-                &[
-                    ("GameBoy", Palette(PaletteSelect::Dmg)),
-                    ("GameBoy Pocket", Palette(PaletteSelect::Pocket)),
-                    ("GameBoy Light", Palette(PaletteSelect::Light)),
-                    ("Grayscale", Palette(PaletteSelect::Grayscale)),
-                    (
-                        "Custom",
-                        Palette(PaletteSelect::Custom(self.palette.get_palette().clone())),
-                    ),
-                ],
-            );
-
-            self.palette = palette.0;
-
-            let cols = self.palette.get_palette().clone();
-
-            for i in (0..4).rev() {
-                let mut col = Pixel::new(cols[i].r, cols[i].g, cols[i].b);
-
-                ui.color(&mut col);
-
-                if let PaletteSelect::Custom(r) = &mut self.palette {
-                    r[i] = Pixel::new(col.r, col.g, col.b);
-                }
-            }
-        });
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, JsonSchema, Serialize, Deserialize)]
 pub enum Model {
     Auto,
     Dmg,
@@ -135,20 +45,20 @@ impl Model {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub enum BootRom {
     None,
     Internal,
     Custom,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, JsonSchema, Serialize, Deserialize)]
 pub struct CustomBootRoms {
-    pub dmg: Option<PathBuf>,
-    pub cgb: Option<PathBuf>,
-    // pub sgb: Option<PathBuf>,
-    // pub sgb2: Option<PathBuf>,
-    // pub agb: Option<PathBuf>,
+    pub dmg: Option<File>,
+    pub cgb: Option<File>,
+    // pub sgb: Option<File>,
+    // pub sgb2: Option<File>,
+    // pub agb: Option<File>,
 }
 
 #[rustfmt::skip]
@@ -202,7 +112,9 @@ impl Config {
                 }
             }
             BootRom::Custom => {
-                let load = |path: &Option<PathBuf>| path.as_ref().map(std::fs::read).transpose();
+                let load = |file: &Option<File>| -> Result<Option<Vec<u8>>, std::io::Error> {
+                    file.as_ref().map(|r| r.data()).transpose()
+                };
                 BootRoms {
                     dmg: load(&self.custom_boot_roms.dmg)?,
                     cgb: load(&self.custom_boot_roms.cgb)?,
@@ -216,55 +128,59 @@ impl Config {
             }
         })
     }
+
+    pub fn palette(&self) -> &Palette {
+        self.palette.get_palette().unwrap_or(&self.custom_palette)
+    }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub enum PaletteSelect {
     Dmg,
     Pocket,
     Light,
     Grayscale,
-    Custom(Palette),
+    Custom,
 }
 
-pub type Palette = [Pixel; 4];
+pub type Palette = [Color; 4];
 
 impl PaletteSelect {
-    pub fn get_palette(&self) -> &Palette {
-        match self {
+    pub fn get_palette(&self) -> Option<&Palette> {
+        Some(match self {
             PaletteSelect::Dmg => &PALETTE_DMG,
             PaletteSelect::Pocket => &PALETTE_POCKET,
             PaletteSelect::Light => &PALETTE_LIGHT,
             PaletteSelect::Grayscale => &PALETTE_GRAYSCALE,
-            PaletteSelect::Custom(pal) => pal,
-        }
+            PaletteSelect::Custom => None?,
+        })
     }
 }
 
 pub const PALETTE_DMG: Palette = [
-    Pixel::new(120, 128, 16),
-    Pixel::new(92, 120, 64),
-    Pixel::new(56, 88, 76),
-    Pixel::new(40, 64, 56),
+    Color::new(120, 128, 16),
+    Color::new(92, 120, 64),
+    Color::new(56, 88, 76),
+    Color::new(40, 64, 56),
 ];
 
 pub const PALETTE_POCKET: Palette = [
-    Pixel::new(200, 200, 168),
-    Pixel::new(164, 164, 140),
-    Pixel::new(104, 104, 84),
-    Pixel::new(40, 40, 20),
+    Color::new(200, 200, 168),
+    Color::new(164, 164, 140),
+    Color::new(104, 104, 84),
+    Color::new(40, 40, 20),
 ];
 
 pub const PALETTE_LIGHT: Palette = [
-    Pixel::new(0, 178, 132),
-    Pixel::new(0, 156, 116),
-    Pixel::new(0, 104, 74),
-    Pixel::new(0, 80, 56),
+    Color::new(0, 178, 132),
+    Color::new(0, 156, 116),
+    Color::new(0, 104, 74),
+    Color::new(0, 80, 56),
 ];
 
 pub const PALETTE_GRAYSCALE: Palette = [
-    Pixel::new(255, 255, 255),
-    Pixel::new(170, 170, 170),
-    Pixel::new(85, 85, 85),
-    Pixel::new(0, 0, 0),
+    Color::new(255, 255, 255),
+    Color::new(170, 170, 170),
+    Color::new(85, 85, 85),
+    Color::new(0, 0, 0),
 ];

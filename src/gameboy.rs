@@ -1,5 +1,5 @@
 use meru_interface::{
-    AudioBuffer, CoreInfo, EmulatorCore, FrameBuffer, InputData, KeyConfig, Pixel,
+    AudioBuffer, Color, CoreInfo, EmulatorCore, FrameBuffer, InputData, KeyConfig,
 };
 
 use crate::{
@@ -111,7 +111,7 @@ impl EmulatorCore for GameBoy {
 
         let boot_rom = config.boot_roms()?.get(model).map(|r| r.to_owned());
         let backup = backup.map(|r| r.to_vec());
-        let dmg_palette = config.palette.get_palette();
+        let dmg_palette = config.palette();
 
         let mut ret = Self {
             rom_hash,
@@ -146,9 +146,7 @@ impl EmulatorCore for GameBoy {
     fn set_config(&mut self, config: &Self::Config) {
         use context::Ppu;
         self.config = config.clone();
-        self.ctx
-            .ppu_mut()
-            .set_dmg_palette(config.palette.get_palette());
+        self.ctx.ppu_mut().set_dmg_palette(config.palette());
     }
 
     fn exec_frame(&mut self, render_graphics: bool) {
@@ -276,7 +274,7 @@ fn make_color_correction(color_correction: bool) -> Box<dyn ColorCorrection> {
 }
 
 trait ColorCorrection {
-    fn translate(&self, c: &Pixel) -> Pixel;
+    fn translate(&self, c: &Color) -> Color;
 
     fn convert_frame_buffer(&self, dest: &mut FrameBuffer, src: &FrameBuffer) {
         let width = src.width;
@@ -296,7 +294,7 @@ trait ColorCorrection {
 struct RawColor;
 
 impl ColorCorrection for RawColor {
-    fn translate(&self, c: &Pixel) -> Pixel {
+    fn translate(&self, c: &Color) -> Color {
         c.clone()
     }
 }
@@ -304,11 +302,11 @@ impl ColorCorrection for RawColor {
 struct CorrectColor;
 
 impl ColorCorrection for CorrectColor {
-    fn translate(&self, c: &Pixel) -> Pixel {
+    fn translate(&self, c: &Color) -> Color {
         let r = c.r as u16;
         let g = c.g as u16;
         let b = c.b as u16;
-        Pixel::new(
+        Color::new(
             (((r * 26 + g * 4 + b * 2) / 32) as u8).min(240),
             (((g * 24 + b * 8) / 32) as u8).min(240),
             (((r * 6 + g * 4 + b * 22) / 32) as u8).min(240),

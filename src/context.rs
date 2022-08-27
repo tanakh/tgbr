@@ -1,5 +1,5 @@
 use ambassador::{delegatable_trait, Delegate};
-use meru_interface::Pixel;
+use meru_interface::Color;
 use serde::{Deserialize, Serialize};
 
 use crate::{apu, config, gameboy::Error, mbc::create_mbc, ppu, rom, util::to_si_bytesize};
@@ -104,7 +104,7 @@ impl Context {
         rom: crate::rom::Rom,
         boot_rom: &Option<Vec<u8>>,
         backup_ram: Option<Vec<u8>>,
-        dmg_palette: &[Pixel; 4],
+        dmg_palette: &[Color; 4],
     ) -> Result<Self, Error> {
         let io = crate::io::Io::new();
 
