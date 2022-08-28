@@ -4,11 +4,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, JsonSchema, Serialize, Deserialize)]
 pub struct Config {
+    /// Hardware model
     pub model: Model,
+    /// Boot ROM
     pub boot_rom: BootRom,
+    /// Custom boot ROM
     pub custom_boot_roms: CustomBootRoms,
+    /// Game Boy Palette
     pub palette: PaletteSelect,
+    /// Custom palette
     pub custom_palette: Palette,
+    /// Color Correction
     pub color_correction: bool,
 }
 
@@ -28,10 +34,15 @@ impl Default for Config {
 #[derive(PartialEq, Eq, Clone, Copy, Debug, JsonSchema, Serialize, Deserialize)]
 pub enum Model {
     Auto,
+    #[serde(rename = "Game Boy")]
     Dmg,
-    Sgb,
-    Sgb2,
+    #[serde(rename = "Game Boy Color")]
     Cgb,
+    #[serde(rename = "Super Game Boy")]
+    Sgb,
+    #[serde(rename = "Super Game Boy 2")]
+    Sgb2,
+    #[serde(rename = "Game Boy Advance")]
     Agb,
 }
 
@@ -54,7 +65,9 @@ pub enum BootRom {
 
 #[derive(Clone, Default, JsonSchema, Serialize, Deserialize)]
 pub struct CustomBootRoms {
+    /// Game Boy
     pub dmg: Option<File>,
+    /// Game Boy Color
     pub cgb: Option<File>,
     // pub sgb: Option<File>,
     // pub sgb2: Option<File>,
@@ -136,8 +149,11 @@ impl Config {
 
 #[derive(Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub enum PaletteSelect {
+    #[serde(rename = "Game Boy")]
     Dmg,
+    #[serde(rename = "Game Boy Pocket")]
     Pocket,
+    #[serde(rename = "Game Boy Light")]
     Light,
     Grayscale,
     Custom,
